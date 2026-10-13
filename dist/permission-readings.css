@@ -1,0 +1,2 @@
+.permission-readings:empty{display:none}.permission-readings{border-top:1px solid var(--line);padding-top:10px;margin-bottom:16px}.permission-reading{margin-bottom:8px}.permission-reading>span{display:block;font-size:9px;color:var(--dim)}.permission-reading>strong{display:block;font:10px/1.7 ui-monospace,monospace;color:var(--lime);font-weight:400;overflow-wrap:anywhere}.permission-readings .text-button{font-size:10px;margin-top:6px}
+.mobile-reset{display:none}@media(max-width:700px){.mobile-reset{display:block;font-size:15px;padding:3px 9px}}
