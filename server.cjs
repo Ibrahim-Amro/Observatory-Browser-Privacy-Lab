@@ -13,7 +13,7 @@ const server=http.createServer((req,res)=>{
     if(req.headers['sec-fetch-site']==='cross-site'){res.writeHead(403,headers);res.end('Same-origin request required');return;}
     const selectedHeaders={};for(const name of allowHeaders)if(req.headers[name])selectedHeaders[name]=String(req.headers[name]).slice(0,2048);
     res.writeHead(200,{...headers,'Content-Type':'application/json; charset=utf-8'});
-    res.end(req.method==='HEAD'?'':JSON.stringify({local:true,address:req.socket.remoteAddress,family:req.socket.remoteFamily,headers:selectedHeaders,cookiePresent:!!req.headers.cookie}));return;
+    res.end(req.method==='HEAD'?'':JSON.stringify({local:true,address:req.socket.remoteAddress,family:req.socket.remoteFamily,headers:selectedHeaders,cookiePresent:!!req.headers.cookie,location:{status:'local',note:'Localhost has no public IP location. Open the hosted edition to see the offline IP-location estimate.'}}));return;
   }
   const name=requestPath==='/'?'index.html':requestPath.slice(1);
   if(!/^[a-zA-Z0-9-]+\.(html|css|js|svg)$/.test(name)){res.writeHead(404,headers);res.end('Not found');return;}

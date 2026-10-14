@@ -37,6 +37,19 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
   const doc = window.document;
   const secure = window.isSecureContext;
   const inFrame = window.self !== window.top;
+  const policyNames = { location: 'geolocation', camera: 'camera', microphone: 'microphone', display: 'display-capture', bluetooth: 'bluetooth', usb: 'usb', serial: 'serial', hid: 'hid', midi: 'midi', fullscreen: 'fullscreen', 'window-management': 'window-management', idle: 'idle-detection', 'local-fonts': 'local-fonts', speaker: 'speaker-selection', 'wake-lock': 'screen-wake-lock', accelerometer: 'accelerometer', gyroscope: 'gyroscope', magnetometer: 'magnetometer' };
+  const policyBlocked = {};
+  try {
+    const policy = doc.permissionsPolicy || doc.featurePolicy;
+    const recognized = policy?.features?.();
+    if (recognized && policy.allowsFeature) {
+      for (const [id, name] of Object.entries(policyNames)) {
+        // Only query recognized descriptors: unknown names can misleadingly
+        // return false in older browsers. No request or permission use here.
+        if (recognized.includes(name) && policy.allowsFeature(name) === false) policyBlocked[id] = name;
+      }
+    }
+  } catch { /* Browser policy introspection is optional. */ }
   const support = {
     location: !!nav.geolocation,
     camera: !!nav.mediaDevices?.getUserMedia,
@@ -62,24 +75,25 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
     'local-fonts': !!window.queryLocalFonts,
     speaker: !!nav.mediaDevices?.selectAudioOutput,
     'wake-lock': !!nav.wakeLock?.request,
-    contacts: !!nav.contacts?.select,
+    contacts: !inFrame && !!nav.contacts?.select,
     accelerometer: !!window.Accelerometer,
     gyroscope: !!window.Gyroscope,
     magnetometer: !!window.Magnetometer,
   };
   const items = DEFINITIONS.map(([id, title, category, description, opens, limits, path, permission]) => ({
     id, title, category, description, opens, limits, source: MDN + path, permission,
-    supported: !!support[id] && (secure || ['files', 'fullscreen', 'pointer-lock'].includes(id)),
+    supported: !!support[id] && !policyBlocked[id] && (secure || ['files', 'fullscreen', 'pointer-lock'].includes(id)),
   }));
   const byId = Object.fromEntries(items.map(item => [item.id, item]));
   const states = Object.fromEntries(items.map(item => [item.id, {
     status: item.supported ? 'available' : 'unsupported',
-    detail: item.id === 'storage-access' && !inFrame ? 'Not applicable in a top-level page; only meaningful in a cross-site embed.' : item.supported ? 'Not requested. Click to try this experiment.' : secure ? 'This browser does not expose this capability here.' : 'This capability needs a secure context, such as HTTPS or localhost.',
+    detail: item.id === 'storage-access' && !inFrame ? 'Not applicable in a top-level page; only meaningful in a cross-site embed.' : policyBlocked[item.id] ? `Blocked by this document’s Permissions Policy (${policyBlocked[item.id]}). A switch cannot override the host’s policy.` : item.id === 'contacts' && inFrame ? 'The contact picker requires a top-level page, not an embedded frame.' : item.supported ? 'Not requested. Click to try this experiment.' : secure ? `This browser does not expose ${item.title.toLowerCase()} here. A permission grant cannot add a missing browser API.` : 'This capability needs a secure context, such as HTTPS or localhost.',
     supported: item.supported, active: false, priorPermission: 'unknown',
   }]));
   const generations = {};
   const cleanups = {};
   const previews = {};
+  const subscribers = new Set();
   let disposed = false;
   let clipboardFingerprint = null;
   let clipboardReading = null;
@@ -87,7 +101,15 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
   let clipboardAwayAt = 0;
   let clipboardCheck = null;
 
-  const notify = () => { if (!disposed) onChange(); };
+  const notify = () => {
+    if (disposed) return;
+    // A presentation callback must not prevent a real browser request or its
+    // cleanup. Both overview and lab controls receive changes immediately.
+    try { onChange(); } catch { /* Other subscribers can still update. */ }
+    for (const callback of [...subscribers]) {
+      try { callback(); } catch { /* Isolate a failed view from the other view. */ }
+    }
+  };
   const update = (id, status, detail, active = false) => {
     if (states[id].status === status && states[id].detail === detail && states[id].active === active) return;
     Object.assign(states[id], { status, detail, active });
@@ -202,6 +224,7 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
       return;
     }
     clipboardReading = ctx.generation;
+    notify();
     try {
       if (!manual) {
         // Never cause a clipboard permission prompt from a timer or a focus event.
@@ -271,7 +294,7 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
       if (manual) throw error;
       signal(ctx.id, 'automatic checks', 'Paused by browser; click to check again', 'unavailable', 'No background clipboard reads are attempted.');
       update(ctx.id, 'active', 'Automatic reads paused by the browser. Click this card’s button for a manual check.', true);
-    } finally { if (clipboardReading === ctx.generation) clipboardReading = null; }
+    } finally { if (clipboardReading === ctx.generation) { clipboardReading = null; notify(); } }
   }
 
   const runners = {
@@ -279,6 +302,7 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
       const watch = nav.geolocation.watchPosition(position => {
         if (!alive(ctx)) return;
         const c = position.coords;
+        if (!states[ctx.id].active) activate(ctx, 'Location permission allowed; position updates are now live.');
         signal(ctx.id, 'position', { latitude: c.latitude, longitude: c.longitude, accuracyMeters: c.accuracy, altitudeMeters: c.altitude, altitudeAccuracyMeters: c.altitudeAccuracy, headingDegrees: c.heading, speedMetersPerSecond: c.speed }, 'observed', 'Precise location is visible only after this explicit request. Missing fields are not supplied by the device.');
         signal(ctx.id, 'timestamp', new Date(position.timestamp).toLocaleTimeString());
         update(ctx.id, 'active', `Watching position. Reported accuracy: ±${Math.round(c.accuracy)} m.`, true);
@@ -289,7 +313,8 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
         else { signal(ctx.id, 'position status', error.code === 3 ? 'Position request timed out' : 'Position unavailable', 'unavailable'); update(ctx.id, 'active', 'Position watch is active, but the device has not supplied a location.', true); }
       }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
       cleanupFor(ctx, () => nav.geolocation.clearWatch(watch));
-      activate(ctx, 'Location watch started; waiting for the browser’s position.');
+      ensure(ctx);
+      if (states[ctx.id].status === 'requesting') update(ctx.id, 'requesting', 'Waiting for location permission and a first position. Switch off to cancel this watch.');
       void watchPermission(ctx, 'geolocation');
     },
     async camera(ctx) {
@@ -442,14 +467,38 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
       } else {
         files = await new Promise(resolve => {
           const input = doc.createElement('input');
-          input.type = 'file'; input.multiple = true; input.hidden = true;
+          input.type = 'file'; input.multiple = true; input.tabIndex = -1;
+          input.setAttribute('aria-label', 'Choose local files for metadata only');
+          input.style.cssText = 'position:fixed;left:-10000px;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
           let settled = false;
-          const finish = value => { if (settled) return; settled = true; input.remove(); resolve(value); };
+          let departed = false;
+          let returnTimer;
+          const markDeparted = () => { departed = true; };
+          const onVisibility = () => { if (doc.visibilityState === 'hidden') departed = true; };
+          const onReturn = () => {
+            if (!departed || settled) return;
+            clearTimeout(returnTimer);
+            // Old engines may omit input.cancel; allow change to arrive first.
+            returnTimer = setTimeout(() => finish([...input.files]), 300);
+          };
+          const finish = value => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(returnTimer);
+            window.removeEventListener('blur', markDeparted);
+            window.removeEventListener('focus', onReturn);
+            doc.removeEventListener('visibilitychange', onVisibility);
+            input.remove(); resolve(value);
+          };
           input.addEventListener('change', () => finish([...input.files]), { once: true });
           input.addEventListener('cancel', () => finish([]), { once: true });
+          window.addEventListener('blur', markDeparted);
+          window.addEventListener('focus', onReturn);
+          doc.addEventListener('visibilitychange', onVisibility);
           cleanupFor(ctx, () => finish([]));
           doc.body.append(input);
-          input.click();
+          if (typeof input.showPicker === 'function') input.showPicker();
+          else input.click();
         });
       }
       ensure(ctx);
@@ -543,6 +592,11 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
       } catch (error) { settle(); throw error; }
       if (!alive(ctx)) return;
       if (doc.pointerLockElement) activate(ctx, 'Pointer is locked. Press Escape to release it.');
+      else if (states[ctx.id].status === 'requesting') {
+        drain(ctx.id);
+        update(ctx.id, 'error', 'The browser did not enter pointer lock. Click again to retry, and use a supported top-level browser window.');
+        signal(ctx.id, 'request result', 'Pointer lock not entered', 'unavailable');
+      }
     },
     async 'window-management'(ctx) {
       const details = await window.getScreenDetails();
@@ -625,8 +679,15 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
     if (states[id].status === 'requesting') return readState(id);
     if (states[id].active) {
       if (id === 'clipboard' && clipboardCheck) {
+        const generation = generations[id];
         try { await clipboardCheck(true, !!clipboardAwayAt); }
-        catch (error) { log(id, `${error.name || 'Error'}: ${error.message || 'Clipboard read blocked.'}`, 'unavailable'); update(id, 'active', 'Manual read blocked. Browser focus, permission or a user gesture may be required.', true); }
+        catch (error) {
+          if (disposed || generations[id] !== generation) return readState(id);
+          const detail = `${error.name || 'Error'}: ${error.message || 'Clipboard read blocked.'}`;
+          stop(id, 'Clipboard read was blocked. Focus the page and check its site permissions before trying again.');
+          update(id, 'denied', detail);
+          log(id, detail, 'unavailable');
+        }
       }
       return readState(id);
     }
@@ -640,9 +701,13 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
     } catch (error) {
       if (!alive(ctx)) return readState(id);
       drain(id);
-      const denied = ['NotAllowedError', 'PermissionDeniedError', 'SecurityError'].includes(error.name);
+      const interactionRequest = id === 'fullscreen' || id === 'pointer-lock';
+      const nativeRefusal = interactionRequest && error.name === 'TypeError' && /not\s+(?:granted|allowed)|permission[^.]*denied|request[^.]*denied/i.test(error.message || '');
+      const denied = nativeRefusal || ['NotAllowedError', 'PermissionDeniedError', 'SecurityError'].includes(error.name);
       const cancelled = ['AbortError', 'NotFoundError'].includes(error.name);
-      const detail = `${error.name || 'Error'}: ${error.message || (denied ? 'Blocked by browser permission or policy.' : 'The experiment could not start.')}`;
+      const nativeDetail = `${error.name || 'Error'}: ${error.message || (denied ? 'Blocked by browser permission or policy.' : 'The experiment could not start.')}`;
+      const capability = id === 'fullscreen' ? 'fullscreen' : 'pointer lock';
+      const detail = interactionRequest && !cancelled ? `The browser ${denied ? 'refused' : 'could not start'} ${capability}. Focus this page and click again. Your browser or an embedding page’s policy may restrict this capability. Browser response: ${nativeDetail}` : nativeDetail;
       update(id, denied ? 'denied' : cancelled ? 'available' : 'error', detail);
       signal(id, 'request result', cancelled ? 'Cancelled or no matching device' : denied ? 'Denied or blocked by policy' : 'Could not start', 'unavailable', detail);
       log(id, detail, 'unavailable');
@@ -651,7 +716,7 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
   }
 
   function readState(id) {
-    return states[id] ? { ...states[id] } : { status: 'unsupported', detail: 'Unknown experiment.', supported: false, active: false };
+    return states[id] ? { ...states[id], requestId: generations[id] || 0, checking: id === 'clipboard' && clipboardReading === generations[id] } : { status: 'unsupported', detail: 'Unknown experiment.', supported: false, active: false };
   }
 
   async function readExistingPermissions() {
@@ -674,7 +739,12 @@ export function createPermissionLab({ setSignal = () => {}, addEvent = () => {},
 
   return {
     items, run, stop, stopAll, readState, readExistingPermissions,
+    subscribe(callback) {
+      if (disposed || typeof callback !== 'function') return () => {};
+      subscribers.add(callback);
+      return () => subscribers.delete(callback);
+    },
     getPreview: id => previews[id] || null,
-    dispose() { stopAll(); disposed = true; },
+    dispose() { stopAll(); disposed = true; subscribers.clear(); },
   };
 }

@@ -1,13 +1,15 @@
 {
   "name": "observatory-browser-privacy-lab",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Live browser privacy education: see page activity and permission-gated signals.",
   "homepage": "https://ia582.brighton.domains/observatory/",
   "scripts": {
     "start": "node server.cjs",
-    "test": "node tests/evidence.test.mjs && node tests/clipboard-events.test.mjs"
+    "test": "node tests/evidence.test.mjs && node tests/clipboard-events.test.mjs && node tests/connection.test.mjs && node tests/permissions.test.mjs"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

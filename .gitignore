@@ -7,3 +7,6 @@ node_modules/
 *.json.local
 .DS_Store
 Thumbs.db
+**/*.mmdb
+**/*.mmdb.gz
+observatory-data/

@@ -4,6 +4,8 @@ import {guides,limitations} from './learn.js';
 import {createEvidenceStore} from './evidence.js';
 import {startIntegrity} from './integrity.js';
 import {mountPermissionRows} from './permission-rows.js';
+import {mountEvidencePreview} from './preview.js';
+import {createConnectionMonitor} from './connection.js';
 const $ = id => document.getElementById(id);
 const node = (tag,className,text) => { const el=document.createElement(tag);if(className)el.className=className;if(text!==undefined)el.textContent=text;return el; };
 const title = value => String(value).replace(/(^|[-\s])\w/g,c=>c.toUpperCase());
@@ -25,6 +27,9 @@ let viewTimer;
 let startupTimer;
 let startupDeadline=0;
 let integrity = null;
+let connection = null;
+let lastConnectionChange=0;
+const connectionHistory=[];
 let permissionMounts = [];
 let basicMode = true;
 let lastFeedKeys = '';
@@ -35,6 +40,7 @@ const signals = new Map();
 const tableNodes = new Map();
 let lastTableKeys='';
 let lastGroupKeys='';
+const preview=mountEvidencePreview({container:$('previewTrack'),button:$('previewPause')});
 function finishStartupIfDue(){if(startupDeadline&&Date.now()>=startupDeadline){startupDeadline=0;evidence.finishStartup();}}
 function setSignal(group,key,value,options={}) {
   if(!started)return;
@@ -55,43 +61,53 @@ function addEvent(eventTitle,detail,kind='observed',meta={}) {
   evidence.add(eventTitle,detail,kind,meta);feedDirty=true;
 }
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4500);}
-function chooseDevice(value){device=value;document.querySelectorAll('[data-device]').forEach(button=>{const selected=button.dataset.device===value;button.setAttribute('aria-pressed',String(selected));button.querySelector('.choice-check').textContent=selected?'●':'○';});$('begin').disabled=!device;updateDevice();}
+function chooseDevice(value){device=value;document.querySelectorAll('[data-device]').forEach(button=>{const selected=button.dataset.device===value;button.setAttribute('aria-pressed',String(selected));button.querySelector('.choice-check').textContent=selected?'●':'○';});$('begin').disabled=!device;$('begin').textContent=device?'Start my privacy test ↗':'Choose a device to start';updateDevice();}
 function updateDevice(){
   $('switchDevice').textContent=device==='Mobile'?'▯ Mobile':'▣ PC';
   $('deviceTip').textContent=device==='Mobile'?'Try scrolling, rotating, or switching apps. OS edge gestures may never reach the page; a hidden state cannot identify a notification shade or task switcher.':'Try resizing the window or switching to another tab. Visibility changes show that the page was hidden, not where you went.';
   if(started)setSignal('device','Chosen experience',device,{note:'Explicit visitor selection. This is not an automatic hardware classification.',source:'https://developer.mozilla.org/en-US/docs/Web/API/Navigator/maxTouchPoints'});
 }
-async function readRequestMetadata(token){
-  try{
-    const response=await fetch(new URL('./api/context.php',import.meta.url),{cache:'no-store',credentials:'omit'});
-    if(!response.ok)throw new Error('No request metadata endpoint');
-    const data=await response.json();if(!started||token!==sessionToken)return;
-    setSignal('network','Connection address seen by server',data.address,{note:data.local?'This localhost connection is loopback, not your public internet IP.':'The address of the connection reaching this host. It may belong to a VPN, proxy or shared network; it is not a verified identity or precise location.',source:'https://www.w3.org/TR/fingerprinting-guidance/'});
-    setSignal('network','Server connection family',data.family,{note:'Connection metadata from this server. Not a complete network inventory.'});
-    for(const [key,value] of Object.entries(data.headers))setSignal('network',`Request header · ${key}`,value,{note:'Header received by this server on the demo context request. Browser and HTTP policy determine what is sent.',source:'https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers'});
-    setSignal('network','Cookie header presence',data.cookiePresent?'Present on metadata request':'Absent on metadata request',{note:'The demo context fetch omits credentials. This does not prove that the browser stores no cookies or that other requests contain none.',source:'https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Cookies'});
-    addEvent('Request metadata surfaced',data.local?'Local server returned its loopback connection address and a limited header list.':'This host returned the connection address and a limited request-header list. No external IP-lookup service was contacted.','context');
-  }catch{
-    if(started&&token===sessionToken)setSignal('network','Server-side request metadata','Not connected',{kind:'unavailable',note:'The metadata endpoint could not be read. Servers still receive ordinary request metadata when serving a page.'});
+function renderConnection(state){
+  if(!started)return;
+  $('connectionAddress').textContent=state.address||'Not available yet';
+  $('connectionPrevious').textContent=state.previousAddress?`Previous: ${state.previousAddress}`:state.local?'Local preview: this is a loopback connection.':'No earlier address in this session.';
+  $('connectionChanges').textContent=state.changes;
+  $('connectionStatus').textContent=state.detail||({checking:'Checking the current connection…',ready:'Last check completed.',error:'Check failed; last verified value is kept.',paused:'Paused while the page is hidden.',stopped:'Checks stopped.'}[state.status]||'Waiting for the first check.');
+  $('refreshConnection').disabled=!!state.busy;$('refreshConnection').textContent=state.busy?'Checking…':'Check connection';
+  $('connectionChecked').textContent=state.checkedAt?`Last successful check: ${new Date(state.checkedAt).toLocaleTimeString()} · ${state.family||'Unknown family'}`:'Not checked yet';
+  const location=state.location;
+  if(location?.status==='available'){
+    $('connectionLocation').textContent=[location.city,location.region,location.country].filter((value,index,array)=>value&&array.indexOf(value)===index).join(', ')||location.countryCode||'No named location';
+    $('connectionProvider').textContent=[location.asn?`AS${String(location.asn).replace(/^AS/i,'')}`:'',location.organization||''].filter(Boolean).join(' · ')||'Approximate network location; not GPS.';
+  }else{
+    $('connectionLocation').textContent=state.local?'Localhost · no IP location':'Location not available';
+    $('connectionProvider').textContent=location?.note||'No location was returned for this connection. A permission-based location is a separate experiment.';
   }
+  $('connectionDatabase').textContent=location?.databaseDate?`database ${location.databaseDate}`:'offline database';
+  if(state.changes>lastConnectionChange&&state.address&&state.previousAddress){
+    connectionHistory.unshift({from:state.previousAddress,to:state.address,time:state.checkedAt});if(connectionHistory.length>20)connectionHistory.pop();
+    $('connectionHistory').replaceChildren(...connectionHistory.map(entry=>node('li','',`${new Date(entry.time).toLocaleTimeString()} · ${entry.from} → ${entry.to}`)));
+  }
+  lastConnectionChange=state.changes;
 }
 function beginSession(){
   if(!device||started)return;
   started=true;sessionToken++;startTime=new Date().toISOString();startupDeadline=Date.now()+1000;
   $('welcome').hidden=true;$('app').hidden=false;document.querySelector('.skip').href='#dashboard';
+  preview.setVisible(false);
   sensors=startSensors({setSignal,addEvent,getDevice:()=>device});
   lab=createPermissionLab({setSignal,addEvent,onChange:()=>{permissionDirty=true;}});
   integrity=startIntegrity({setSignal,addEvent});
-  const rowOptions={lab,onRequest:()=>{hasRequested=true;},onInspect:item=>{selectedGroup='permissions';$('signalSearch').value=item.title;$('signalKind').value='all';navigate('signals');},onError:error=>toast(`This capability could not finish: ${error?.name||'restricted'}.`)};
+  const rowOptions={lab,onRequest:()=>{hasRequested=true;},onInspect:item=>{selectedGroup='permissions';$('signalSearch').value=item.title;$('signalKind').value='all';navigate('signals');},onError:error=>toast(error?.message||`This capability could not finish: ${error?.name||'restricted'}.`)};
   permissionMounts=[mountPermissionRows({container:$('overviewPermissionRows'),...rowOptions}),mountPermissionRows({container:$('permissionCards'),...rowOptions})];
   updateDevice();
   addEvent('Observatory session started',`Experience selected: ${device}. No new permission requests have been made.`,'context');
   lab.readExistingPermissions?.().catch(()=>{});
-  readRequestMetadata(sessionToken);
+  connection=createConnectionMonitor({setSignal,addEvent,onUpdate:renderConnection});connection.start();
   viewTimer=setInterval(renderLive,500);
   const token=sessionToken;
   startupTimer=setTimeout(()=>{if(started&&sessionToken===token){startupDeadline=0;evidence.finishStartup();feedDirty=true;renderLive();}},Math.max(0,startupDeadline-Date.now()));
-  navigate('overview');renderLive();window.scrollTo(0,0);
+  navigate('overview');renderLive();window.scrollTo(0,0);$('dashboard').focus({preventScroll:true});
 }
 function navigate(view){
   if(!started||!['overview','signals','permissions','fingerprints','boundaries','guide'].includes(view))return;
@@ -210,10 +226,11 @@ function exportSession(){
   const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));const a=node('a');a.href=url;a.download=`observatory-session-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Session report downloaded to your device.');
 }
 function resetSession(){
-  sessionToken++;sensors?.stop();lab?.dispose();integrity?.stop();permissionMounts.forEach(mount=>mount.dispose());permissionMounts=[];started=false;clearInterval(viewTimer);clearTimeout(startupTimer);startupDeadline=0;sensors=null;lab=null;integrity=null;signals.clear();evidence.reset();hasRequested=false;lastGroupKeys='';lastTableKeys='';lastFeedKeys='';tableNodes.clear();signalsDirty=false;permissionDirty=false;feedDirty=false;selectedGroup='all';
+  sessionToken++;connection?.stop();connection=null;lastConnectionChange=0;connectionHistory.length=0;sensors?.stop();lab?.dispose();integrity?.stop();permissionMounts.forEach(mount=>mount.dispose());permissionMounts=[];started=false;clearInterval(viewTimer);clearTimeout(startupTimer);startupDeadline=0;sensors=null;lab=null;integrity=null;signals.clear();evidence.reset();hasRequested=false;lastGroupKeys='';lastTableKeys='';lastFeedKeys='';tableNodes.clear();signalsDirty=false;permissionDirty=false;feedDirty=false;selectedGroup='all';
   $('eventFeed').replaceChildren();$('signalRows').replaceChildren();$('permissionCards').replaceChildren();$('overviewPermissionRows').replaceChildren();$('fingerprintCards').replaceChildren();$('signalSearch').value='';$('permissionSearch').value='';$('overviewPermissionSearch').value='';$('signalKind').value='all';$('permissionFilter').value='all';$('overviewPermissionFilter').value='all';
   basicMode=true;$('basicMode').setAttribute('aria-checked','true');$('basicMode').classList.add('on');$('basicMode').querySelector('.switch-label').textContent='On';$('feedSearch').value='';$('feedCategory').value='all';$('includeStartup').checked=true;setFeedSettings(false);
-  $('app').hidden=true;$('welcome').hidden=false;document.querySelector('.skip').href='#main';$('detailDialog').close();device=null;document.querySelectorAll('[data-device]').forEach(button=>{button.setAttribute('aria-pressed','false');button.querySelector('.choice-check').textContent='○';});$('begin').disabled=true;window.scrollTo(0,0);toast('Session cleared. Saved browser grants remain in site settings.');
+  $('regenerate').disabled=false;$('regenerate').textContent='Recalculate signatures ↻';
+  $('app').hidden=true;$('welcome').hidden=false;preview.setVisible(true);document.querySelector('.skip').href='#main';$('detailDialog').close();device=null;document.querySelectorAll('[data-device]').forEach(button=>{button.setAttribute('aria-pressed','false');button.querySelector('.choice-check').textContent='○';});$('begin').disabled=true;$('begin').textContent='Choose a device to start';$('connectionHistory').replaceChildren(node('li','','No verified changes in this session.'));window.scrollTo(0,0);toast('Session cleared. Saved browser grants remain in site settings.');
 }
 document.querySelectorAll('[data-device]').forEach(button=>button.addEventListener('click',()=>chooseDevice(button.dataset.device)));
 $('begin').addEventListener('click',beginSession);
@@ -230,15 +247,17 @@ $('clearFeed').addEventListener('click',()=>{evidence.clearLog();lastFeedKeys=''
 const stopAllDemos=()=>{lab?.stopAll();permissionDirty=true;renderPermissions();toast('Demos stopped. Revoke saved grants through browser site settings.');};
 $('stopAll').addEventListener('click',stopAllDemos);$('overviewStopAll').addEventListener('click',stopAllDemos);
 function setFeedSettings(open){$('feedSettings').hidden=!open;$('feedSettingsButton').setAttribute('aria-expanded',String(open));}
+function setBasicMode(value){basicMode=!!value;$('basicMode').setAttribute('aria-checked',String(basicMode));$('basicMode').classList.toggle('on',basicMode);$('basicMode').querySelector('.switch-label').textContent=basicMode?'On':'Off';renderFeed(true);}
 $('feedSettingsButton').addEventListener('click',()=>setFeedSettings($('feedSettings').hidden));
 $('closeFeedSettings').addEventListener('click',()=>{setFeedSettings(false);$('feedSettingsButton').focus();});
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('feedSettings').hidden){setFeedSettings(false);$('feedSettingsButton').focus();}});
 document.addEventListener('click',event=>{if(!$('feedSettings').hidden&&!$('feedSettings').contains(event.target)&&!$('feedSettingsButton').contains(event.target))setFeedSettings(false);});
-$('feedSearch').addEventListener('input',()=>renderFeed(true));$('feedCategory').addEventListener('change',()=>renderFeed(true));$('includeStartup').addEventListener('change',()=>renderFeed(true));
-$('basicMode').addEventListener('click',()=>{basicMode=!basicMode;$('basicMode').setAttribute('aria-checked',String(basicMode));$('basicMode').classList.toggle('on',basicMode);$('basicMode').querySelector('.switch-label').textContent=basicMode?'On':'Off';renderFeed(true);});
+$('feedSearch').addEventListener('input',()=>renderFeed(true));$('feedCategory').addEventListener('change',()=>{if(basicMode&&!['all','clicks','clipboard','screenshot','tabs','resolution','swipe'].includes($('feedCategory').value)){setBasicMode(false);toast('Extensive mode enabled to show this category.');}else renderFeed(true);});$('includeStartup').addEventListener('change',()=>renderFeed(true));
+$('basicMode').addEventListener('click',()=>{if(!basicMode&&!['all','clicks','clipboard','screenshot','tabs','resolution','swipe'].includes($('feedCategory').value))$('feedCategory').value='all';setBasicMode(!basicMode);});
 $('checkIntegrity').addEventListener('click',()=>{integrity?.checkNow();renderSummary();toast('Watched script and JavaScript reference checks refreshed.');});
 $('inspectIntegrity').addEventListener('click',()=>{selectedGroup='integrity';$('signalSearch').value='';$('signalKind').value='all';navigate('signals');});
-$('regenerate').addEventListener('click',async()=>{await sensors?.fingerprint();renderFingerprints();toast('Local signatures recalculated. They are not unique identity claims.');});
+$('regenerate').addEventListener('click',async()=>{const token=sessionToken;$('regenerate').disabled=true;$('regenerate').textContent='Recalculating…';try{await sensors?.fingerprint();if(started&&token===sessionToken){renderFingerprints();toast('Local signatures recalculated. Unavailable values stay labelled.');}}catch(error){if(started&&token===sessionToken)toast(`Recalculation could not finish: ${error?.name||'restricted'}.`);}finally{if(token===sessionToken){$('regenerate').disabled=false;$('regenerate').textContent='Recalculate signatures ↻';}}});
+$('refreshConnection').addEventListener('click',async()=>{const result=await connection?.checkNow();if(result?.status==='error')toast(result.detail||'The connection check failed. The last verified IP is kept.');});
 $('export').addEventListener('click',exportSession);$('reset').addEventListener('click',resetSession);$('resetMobile').addEventListener('click',resetSession);
 window.addEventListener('pagehide',()=>lab?.stopAll());
 window.addEventListener('error',event=>{if(started)toast(`A browser feature failed: ${event.error?.name||'unavailable'}. Other readings can continue.`);});
