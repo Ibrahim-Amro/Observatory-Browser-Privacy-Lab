@@ -1,10 +1,10 @@
 /**
- * In-memory evidence log. Basic and extensive are display filters over the same
+ * In-memory evidence log. Everyday and Expert mode filter the same
  * collection. Signal snapshots never increment action counters. No browser APIs,
  * persistence, networking, or timers are used by this module.
  */
 const CATEGORIES = ['clicks', 'clipboard', 'screenshot', 'tabs', 'resolution', 'pointer', 'network', 'browser', 'device', 'fingerprint', 'performance', 'permissions', 'integrity', 'session', 'display', 'swipe'];
-const BASIC = new Set(['clicks', 'clipboard', 'screenshot', 'tabs', 'resolution', 'swipe']);
+const EVERYDAY = new Set(['clicks', 'clipboard', 'screenshot', 'tabs', 'resolution', 'swipe']);
 const ALIASES = {
   clicks: 'click clicks clicked clicking tap taps button mouse',
   clipboard: 'clipboard',
@@ -148,7 +148,7 @@ export function createEvidenceStore({ maxEntries = 600, now = () => Date.now() }
     const text = valueText(value);
     const kind = String(options.kind || 'observed');
     const note = String(options.note || '');
-    const signature = `${text}\u0000${kind}\u0000${note}`;
+    const signature = `${text}\u0000${kind}\u0000${note}\u0000${options.source||''}`;
     const previous = readings.get(id);
     if (previous?.signature === signature) return undefined;
     const at = timestamp();
@@ -156,7 +156,7 @@ export function createEvidenceStore({ maxEntries = 600, now = () => Date.now() }
     const category = canonicalCategory(options.category) || classify(label, text, scope, label);
     const reading = { signature, emittedAt: previous?.emittedAt ?? -Infinity };
     readings.set(id, reading);
-    if (startup && kind !== 'unavailable' && scope !== 'boundaries') {
+    if (startup && !['unavailable','context'].includes(kind) && scope !== 'boundaries') {
       startupReadings.set(id, { key: label, group: scope });
     }
     // Initial readings are useful evidence. Later action-count updates duplicate
@@ -178,14 +178,16 @@ export function createEvidenceStore({ maxEntries = 600, now = () => Date.now() }
     return summary();
   }
 
-  function query({ mode = 'basic', categories = [], search = '', showStartup = true, includeContext = true } = {}) {
+  function query({ mode = 'normal', categories = [], kinds = [], search = '', showStartup = true, includeContext = true } = {}) {
     const requestedCategories = (Array.isArray(categories) ? categories : [categories]).filter(category => category !== undefined && category !== null && category !== '');
     const selected = new Set(requestedCategories.map(canonicalCategory).filter(Boolean));
+    const selectedKinds = new Set(Array.isArray(kinds) ? kinds : [kinds]);
     const terms = normalize(search).split(' ').filter(Boolean);
     return entries.filter(entry => {
       if (!showStartup && entry.startup) return false;
       if (!includeContext && isContext(entry)) return false;
-      if (mode !== 'extensive' && (!BASIC.has(entry.category) || !isActivity(entry))) return false;
+      if (!['expert','extensive'].includes(mode) && (!EVERYDAY.has(entry.category) || !isActivity(entry))) return false;
+      if (selectedKinds.size && !selectedKinds.has(entry.kind)) return false;
       if (requestedCategories.length && !selected.has(entry.category)) return false;
       if (!terms.length) return true;
       const clipboardAction = entry.category === 'clipboard' ? normalize(entry.title).match(/(?:^| )(copy|cut|paste)(?: |$)/)?.[1] : undefined;

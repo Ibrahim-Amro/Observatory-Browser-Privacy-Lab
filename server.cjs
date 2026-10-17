@@ -8,6 +8,8 @@ const allowHeaders=['user-agent','accept','accept-language','sec-ch-ua','sec-ch-
 const server=http.createServer((req,res)=>{
   let requestPath;
   try{requestPath=new URL(req.url,'http://localhost:5173').pathname;}catch{res.writeHead(400,headers);res.end('Bad request');return;}
+  // Visitor statistics are hosted-only; preview never changes live totals.
+  if(requestPath==='/api/visit.php'&&req.method==='POST'){req.resume();res.writeHead(204,headers);res.end();return;}
   if(req.method!=='GET'&&req.method!=='HEAD'){res.writeHead(405,{...headers,Allow:'GET, HEAD'});res.end('Method not allowed');return;}
   if(requestPath==='/api/context'||requestPath==='/api/context.php'){
     if(req.headers['sec-fetch-site']==='cross-site'){res.writeHead(403,headers);res.end('Same-origin request required');return;}

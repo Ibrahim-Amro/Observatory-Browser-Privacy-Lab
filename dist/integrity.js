@@ -23,9 +23,13 @@ export function startIntegrity({ setSignal, addEvent }) {
   const cleanup = [];
   const emitted = new Map();
   const seenScriptNodes = new WeakSet();
-  const seenTimingMarkers = new Set();
+  const seenTimingMarkers = new Map();
   const apiStates = new Map();
   const extensionProtocols = new Set();
+  // Origin keys are held only in this closure to count distinct exposed origins.
+  // Neither keys nor extension IDs are emitted, exported, persistently stored,
+  // or probed. Timing-reference deduplication likewise stays in this closure.
+  const extensionOrigins = new Set();
   let stopped = false;
   let flushTimer = null;
   let observer = null;
@@ -53,9 +57,12 @@ export function startIntegrity({ setSignal, addEvent }) {
   }
   function isScript(node) { return node?.nodeType === 1 && String(node.tagName).toLowerCase() === 'script'; }
   function extensionProtocol(value) {
-    // Never expose or retain extension identifiers, URL paths, or query strings.
     const match = typeof value === 'string' && /^(chrome-extension|moz-extension|safari-extension|safari-web-extension):/i.exec(value);
-    return match ? `${match[1].toLowerCase()}:` : null;
+    if (!match) return null;
+    const protocol = `${match[1].toLowerCase()}:`;
+    const parsed = readSafely(() => new URL(value));
+    if (parsed.ok && parsed.value.host && !parsed.value.username && !parsed.value.password) extensionOrigins.add(`${protocol}//${parsed.value.host.toLowerCase()}`);
+    return protocol;
   }
   function scriptKind(node) {
     const result = readSafely(() => node.getAttribute('src'));
@@ -70,11 +77,12 @@ export function startIntegrity({ setSignal, addEvent }) {
   }
   function publishCounts() {
     emit('Initial script elements', initialScripts, { note: 'Script elements visible when observation started. This is not a record of all code that has run; module dependencies, removed scripts, workers, and isolated extension worlds are not fully represented.' });
-    emit('Added script elements', `${counts.addedScripts} total · ${counts.inlineScripts} inline · ${counts.sameOriginScripts} same origin · ${counts.otherOriginScripts} other origin · ${counts.extensionScripts} extension scheme`, { note: 'Observed additions anywhere in the document after starting; this app creates no script elements during a session. Source relationship only; no URLs or script contents are retained. An added node does not prove that its code executed.' });
+    emit('Added script elements', `${counts.addedScripts} total · ${counts.inlineScripts} inline · ${counts.sameOriginScripts} same origin · ${counts.otherOriginScripts} other origin · ${counts.extensionScripts} extension scheme`, { note: 'Observed additions in the top document after starting; this app creates no script elements during a session. Source relationship only; raw URLs and script contents are not output or exported. Origin keys stay in memory for counting. An added node does not prove that its code executed.' });
     emit('Script attribute changes', counts.scriptAttributes, { note: 'Changes to script src/type/async/defer/integrity/crossorigin/referrerpolicy attributes anywhere in the document. Attribute values and code are not logged; cause and execution are unknown.' });
     emit('Inline handler attribute changes', counts.inlineHandlers, { note: 'Changes to on… HTML attributes anywhere in the document, including app UI. Handler text is never inspected. Listener functions registered with addEventListener are not enumerated.' });
     emit('Document data-attribute changes', counts.rootDataAttributes, { note: 'Only data-attribute mutations on the html/body elements, outside excluded app UI. Values are not inspected. A change may come from ordinary page code, browser tools, or an extension; its cause is unknown.' });
-    emit('Extension-scheme script hints', `${initialExtensionScripts} initial · ${counts.extensionScripts} added · ${extensionScriptChanges} source changes`, { kind: initialExtensionScripts + counts.extensionScripts + extensionScriptChanges ? 'estimate' : 'observed', note: 'Only exposed extension-origin script references. They do not enumerate installed extensions, prove execution, identify an extension, or establish who changed the page.', source: source.extensions });
+    emit('Extension-scheme script hints', `${initialExtensionScripts} initial references · ${counts.extensionScripts} added references · ${extensionScriptChanges} source changes`, { kind: initialExtensionScripts + counts.extensionScripts + extensionScriptChanges ? 'estimate' : 'observed', note: 'These are script-reference observations, not a count of extensions. Multiple references can share one origin. References do not establish execution, installation, or who changed the page.', source: source.extensions });
+    emit('Distinct exposed extension origins', extensionOrigins.size, { note: 'Distinct parseable protocol/host pairs across already-exposed script references and resource timing entries in this session. Three references can share one origin. This is not an installed-extension count or proof of execution. Origin identifiers are held only for in-memory deduplication and are not shown or exported.', source: source.extensions });
     emit('Exposed extension schemes', extensionProtocols.size ? [...extensionProtocols].sort().join(', ') : 'None observed', { kind: extensionProtocols.size ? 'estimate' : 'observed', note: 'Only protocol names are shown; no extension IDs, hosts, paths, or contents. No observed scheme does not mean no extensions exist.', source: source.extensions });
   }
   function flush() {
@@ -87,7 +95,7 @@ export function startIntegrity({ setSignal, addEvent }) {
     for (const key of Object.keys(counts)) counts[key] += batch[key];
     publishCounts();
     if (batch.addedScripts) event('Page script elements added', `${batch.addedScripts} additions: ${batch.inlineScripts} inline, ${batch.sameOriginScripts} same origin, ${batch.otherOriginScripts} other origin, ${batch.extensionScripts} extension scheme. Source and execution are not verified.`);
-    if (batch.extensionScripts) event('Exposed extension-origin hint', `${batch.extensionScripts} added script references use an extension URL scheme. Only protocol/count is shown. This is not an installed-extension inventory or proof of execution.`, 'estimate');
+    if (batch.extensionScripts) event('Extension-origin resource reference observed', `${batch.extensionScripts} added script references use extension URL schemes; ${extensionOrigins.size} distinct exposed origins have been observed across this session. References are not extensions, and do not prove execution. Cause unknown.`, 'estimate');
     if (batch.scriptAttributes || batch.inlineHandlers || batch.rootDataAttributes) event('Page code-related attributes changed', `${batch.scriptAttributes} script attributes, ${batch.inlineHandlers} inline-handler attributes, ${batch.rootDataAttributes} document data attributes. Values were not logged; only script-source metadata was classified. Handler/data values were not read; cause is unknown.`);
   }
   function queueFlush() {
@@ -135,7 +143,7 @@ export function startIntegrity({ setSignal, addEvent }) {
       else unavailable += 1;
       emit(`API reference · ${entry.name}`, state === 'changed' ? 'Reference changed since module baseline' : state === 'unchanged' ? 'No reference change observed' : 'Unavailable for comparison', { kind: state === 'unavailable' ? 'unavailable' : 'observed', note: 'Exact reference equality with the module-load snapshot only. The baseline is not a pristine browser. Changes may be legitimate libraries, debugging, polyfills, automation, or extensions. Unchanged references do not prove absence of modification or external control.', source: source.functions });
       const previous = apiStates.get(entry.name);
-      if (state === 'changed' && previous !== 'changed') event('API reference changed since baseline', `${entry.name} now has a different reference. The cause and intent are unknown; this does not prove an extension, malicious change, or external control.`);
+      if (state === 'changed' && previous !== 'changed') event('Page API reference changed', `${entry.name} now differs from the module-load snapshot. Cause unknown; this does not identify an extension, establish malicious intent, or prove external control.`);
       else if (previous === 'changed' && state === 'unchanged') event('API reference returned to baseline', `${entry.name} again matches the module-load reference. This is not a security verdict.`);
       apiStates.set(entry.name, state);
     }
@@ -148,18 +156,23 @@ export function startIntegrity({ setSignal, addEvent }) {
       return;
     }
     let added = 0;
+    const occurrences = new Map();
     for (const entry of result.value) {
       const protocol = extensionProtocol(entry.name);
       if (!protocol) continue;
-      // Deduplicate metadata, retaining no resource URL or extension identifier.
-      const marker = `${protocol}|${Number(entry.startTime)}|${Number(entry.duration)}|${String(entry.initiatorType || '')}`;
-      if (seenTimingMarkers.has(marker)) continue;
-      seenTimingMarkers.add(marker);
+      // URL keys are private session-memory deduplication data, never output.
+      // Include occurrence count so coarsened equal timings do not collapse
+      // distinct references or repeated entries into one observation.
+      const marker = `${entry.name.length}:${entry.name}|${Number(entry.startTime)}|${Number(entry.duration)}|${String(entry.initiatorType || '')}`;
+      const occurrence = (occurrences.get(marker) || 0) + 1;
+      occurrences.set(marker, occurrence);
+      if (occurrence <= (seenTimingMarkers.get(marker) || 0)) continue;
+      seenTimingMarkers.set(marker, occurrence);
       extensionProtocols.add(protocol);
       extensionTimingEntries += 1; added += 1;
     }
-    emit('Extension-scheme resource hints', `${extensionTimingEntries} exposed timing entries`, { kind: extensionTimingEntries ? 'estimate' : 'observed', note: 'Inspects existing resource timing records for extension URL schemes only. This is incomplete, browser-dependent evidence; a record does not establish code execution or enumerate extensions. No requests, extension-ID scans, or URL/path retention.', source: source.performance });
-    if (added) event('Extension-origin resource timing hint', `${added} already-exposed resource timing entries use extension schemes. Protocol/count only; not proof of an installed-extension inventory or successful execution.`, 'estimate');
+    emit('Extension-scheme resource hints', `${extensionTimingEntries} exposed timing entries`, { kind: extensionTimingEntries ? 'estimate' : 'observed', note: 'Inspects existing resource timing records for extension URL schemes only. A record does not establish execution or enumerate extensions. Reference keys are deduplicated only in session memory; raw URLs, IDs, and paths are not logged or exported. No requests or extension-ID probes occur.', source: source.performance });
+    if (added) event('Extension-origin resource reference observed', `${added} already-exposed resource timing references use extension schemes; ${extensionOrigins.size} distinct exposed origins have been observed across the session. Timing references and script-node references may describe the same resource and must not be added as an extension count. Execution and cause are unknown.`, 'estimate');
   }
   function checkNow() {
     if (stopped) return summary();
@@ -171,7 +184,7 @@ export function startIntegrity({ setSignal, addEvent }) {
     return summary();
   }
   function summary() {
-    return { stopped, initialScripts, initialExtensionScripts, counts: { ...counts }, changedApis, extensionTimingEntries, extensionScriptChanges, extensionProtocols: [...extensionProtocols].sort() };
+    return { stopped, initialScripts, initialExtensionScripts, counts: { ...counts }, changedApis, extensionTimingEntries, extensionScriptChanges, distinctExtensionOrigins: extensionOrigins.size, scriptReferenceObservations: initialExtensionScripts + counts.extensionScripts, resourceReferenceObservations: extensionTimingEntries, extensionProtocols: [...extensionProtocols].sort() };
   }
 
   const initial = readSafely(() => document.querySelectorAll('script'));
@@ -180,9 +193,9 @@ export function startIntegrity({ setSignal, addEvent }) {
     seenScriptNodes.add(script);
     if (scriptKind(script).category === 'extensionScripts') initialExtensionScripts += 1;
   }
-  emit('Page-change observation scope', 'Script nodes + selected attributes + fixed API references', { note: 'Script additions, script attributes, and inline-handler attributes are watched in the top document’s ordinary DOM, including app UI. Shadow roots and iframe documents are not traversed. Ordinary text/class/style changes and generic app-owned UI mutations are excluded to avoid self-generated noise. Script text, input values, general DOM content, and handler contents are never read.' });
-  emit('Extension / control certainty', 'Cannot establish a complete inventory or control state', { kind: 'unavailable', note: 'Content scripts can run in isolated worlds invisible to page JavaScript. DOM/API changes can have many legitimate causes. No hints does not mean no extensions, automation, injected code, or remote control.', source: source.extensions });
-  emit('Changes before baseline', 'Unknown', { kind: 'unavailable', note: 'References are captured at module load, and DOM observation starts with this session. Earlier modifications, removed nodes, isolated worlds, workers, short-lived changes between checks, and modifications to the detector itself may be missed.', source: source.extensions });
+  emit('Page-change observation scope', 'Script nodes + selected attributes + fixed API references', { kind: 'context', note: 'Script additions, script attributes, and inline-handler attributes are watched in the top document’s ordinary DOM, including app UI. Shadow roots and iframe documents are not traversed. Ordinary text/class/style changes and generic app-owned UI mutations are excluded to avoid self-generated noise. Script text, input values, general DOM content, and handler contents are never read.' });
+  emit('Extension / control certainty', 'Cannot establish a complete inventory or control state', { kind: 'context', note: 'Content scripts can run in isolated worlds invisible to page JavaScript. DOM/API changes can have many legitimate causes. No hints does not mean no extensions, automation, injected code, or remote control.', source: source.extensions });
+  emit('Changes before baseline', 'Unknown', { kind: 'context', note: 'References are captured at module load, and DOM observation starts with this session. Earlier modifications, removed nodes, isolated worlds, workers, short-lived changes between checks, and modifications to the detector itself may be missed.', source: source.extensions });
   if (typeof globalThis.MutationObserver === 'function') {
     const created = readSafely(() => new MutationObserver(mutations));
     if (created.ok) {

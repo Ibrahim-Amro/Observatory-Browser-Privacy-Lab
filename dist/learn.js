@@ -12,21 +12,21 @@ export const guides = [
     id: 'network',
     title: 'The first request already says something',
     summary: 'Servers receive network and request metadata while loading a page.',
-    body: 'A server can observe the connection address and HTTP request headers, including browser-provided information and any applicable cookies. A public server usually sees your public-facing address or a proxy address. On localhost the server sees a loopback connection. On the hosted edition the demo reflects the connection address reaching this host without contacting an external IP service. It may be a proxy or VPN address. Request metadata is distinct from values read by page JavaScript.',
+    body: 'A server can observe the connection reaching it and ordinary HTTP request headers. A localhost server usually sees a loopback address. A hosted server may see a visitor connection, proxy, or configured intermediary. The connection panel labels its source: this website and any explicitly disclosed browser-side lookup provider are different observations. A browser request to an external provider also reveals its connection IP and normal request metadata to that provider. A server request would instead expose the server connection. IP-based location is approximate and separate from permission-based device location.',
     source: 'https://www.w3.org/TR/fingerprinting-guidance/'
   },
   {
     id: 'fingerprints',
     title: 'A fingerprint is a combination, not a name',
     summary: 'Ordinary signals can become more distinctive when combined.',
-    body: 'Rendering results, supported features and configuration values can be combined into a browser fingerprint. A hash in this demo summarizes selected inputs; it does not prove that you are unique, identify a person or measure how many people share the result. Updates, settings and privacy defenses can change it. Browsers may reduce detail or introduce noise to make recognition less reliable.',
+    body: 'This demo takes a fresh, versioned snapshot of browser hints, screen dimensions, color depth, pixel ratio, WebGL metadata, a canvas drawing, and eight fixed font-width samples. The exact ordered hash inputs are available with the result. Ordinary window dimensions and the timestamp are excluded; simple window resizing need not change the signature. Blocked values are recorded as unavailable instead of reusing older GPU or rendering data. Similar devices can match, one device can change, and privacy defenses can add noise. This demo does not use the signatures to track you across websites or measure population uniqueness.',
     source: 'https://developer.mozilla.org/en-US/docs/Glossary/Fingerprinting'
   },
   {
     id: 'attention',
     title: 'A page can observe attention signals',
     summary: 'Focus and visibility reveal page state, with limited meaning.',
-    body: 'Focus changes describe whether this document is receiving input. Visibility changes describe whether the browser considers the document visible. Switching tabs, minimizing a window, opening a browser dialog or moving to another app can affect these signals. They cannot reveal which other app or tab you opened, whether you are looking at the screen, or what you do elsewhere. Background execution may also be throttled or suspended.',
+    body: 'Focus describes whether this document can receive input; it does not measure attention. Visibility describes whether the browser considers the document visible. Switching tabs, minimizing a window, opening a browser dialog or moving to another app can affect these signals. They cannot reveal which other app or tab you opened, whether you are looking at the screen, or what you do elsewhere. Background execution may be throttled or suspended.',
     source: 'https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API'
   },
   {
@@ -51,10 +51,17 @@ export const guides = [
     source: 'https://developer.mozilla.org/en-US/docs/Web/API/Pointer_events'
   },
   {
+    id: 'extension-comparisons',
+    title: 'Compare readings without inventing an extension verdict',
+    summary: 'References, API changes, and changed browser values are different kinds of evidence.',
+    body: 'Capture a baseline, change the extension configuration, reload when required, capture another snapshot, and compare the same schema. Separate changed, unchanged, unavailable, and unstable values. A browser update, display change, randomization, or another environmental change can also alter results. Matching readings do not prove that an extension failed. Isolated extension worlds can remain invisible to page scripts. Exposed resource references do not establish successful execution, and multiple references from one origin do not mean multiple extensions.',
+    source: 'https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts'
+  },
+  {
     id: 'reset',
     title: 'Stopping collection is different from revoking access',
     summary: 'This site can stop its session; the browser controls saved grants.',
-    body: 'Stop or reset controls should end active streams and watchers and clear the demo session. They do not revoke browser permissions or erase data you have already exported. To remove saved access, open this origin\'s permissions in your browser settings. Browsers differ in how long grants last, and an operating system privacy setting can independently block a feature.',
+    body: 'Stopping demos releases their active streams and watchers. Reset clears the local session readings and prevents disposed watchers from repopulating it. These controls do not revoke saved browser permissions, erase local exports, undo aggregate page-entry counts, or remove ordinary hosting logs. Those server-side activities are described in the privacy information. To remove saved access, use this origin\'s browser permission settings; operating system settings may independently block a feature.',
     source: 'https://www.w3.org/TR/permissions/'
   }
 ];
@@ -80,7 +87,7 @@ export const limitations = [
   },
   {
     title: 'Installed extensions',
-    observable: 'Exposed extension-scheme script references or resource timing entries can provide narrow origin hints. This lab shows protocol names and counts, without extension IDs or resource paths.',
+    observable: 'Already-exposed extension-origin resource references, plus a separate count of distinct exposed origins. Three references can share one origin. Protocol/count summaries are shown without raw extension IDs or paths; nothing is probed.',
     hidden: 'A standard inventory of all installed extensions, or proof that referenced code ran. navigator.plugins is normally a standardized PDF-viewer list; it is not an extensions list. No observed hint does not prove absence.',
     source: 'https://developer.mozilla.org/en-US/docs/Web/API/Navigator/plugins'
   },
@@ -104,8 +111,8 @@ export const limitations = [
   },
   {
     title: 'Fingerprints and identity',
-    observable: 'A repeatable summary of whichever input signals this browser exposes.',
-    hidden: 'A certified unique identity, a person\'s real name or a defensible uniqueness percentage without comparison data. Fingerprints can collide, change or be deliberately randomized.',
+    observable: 'A versioned summary of a fresh ordered browser, screen, graphics, canvas, and font-width snapshot. Exact input fields and unavailable states can be inspected.',
+    hidden: 'A verified unique identity, a person\'s real name, or a defensible uniqueness percentage without comparison data. Signatures can collide, change, or be randomized. Ordinary window dimensions are not included in this demo\'s grouping hash.',
     source: 'https://www.w3.org/TR/fingerprinting-guidance/'
   },
   {

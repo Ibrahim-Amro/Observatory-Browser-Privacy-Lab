@@ -2,7 +2,7 @@
  * Baseline observation engine. Calling startSensors is the explicit start.
  * No network, permission requests, clipboard reads, persistent IDs, or text capture.
  */
-export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecified' }) {
+export function startSensors({ setSignal, addEvent }) {
   const cleanup = [];
   const signals = new Map();
   const counts = { clicks: 0, pointerSamples: 0, scrolls: 0, wheel: 0, keys: 0, copies: 0, cuts: 0, pastes: 0, swipes: 0, focusChanges: 0, visibilityChanges: 0, resizes: 0, screenshotSignals: 0, longTasks: 0 };
@@ -15,8 +15,8 @@ export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecifi
   let lastActivity = performance.now();
   let lastClock = performance.now();
   let touchStart = null;
-  let graphics = {};
   let fingerprintPromise = null;
+  let fingerprintGeneration = 0;
   let latestFingerprint = null;
   const sources = {
     navigator: 'https://developer.mozilla.org/en-US/docs/Web/API/Navigator',
@@ -88,9 +88,9 @@ export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecifi
   emit('browser', 'Cookies enabled', bool(navigator.cookieEnabled), { note: 'A browser setting hint; this demo does not set a cookie and this does not guarantee third-party cookie access.' });
   emit('browser', 'Secure context', bool(window.isSecureContext), { note: 'Browsers generally treat localhost as a trustworthy context.' });
   emit('browser', 'Do Not Track', navigator.doNotTrack ?? 'Not sent', { note: 'An optional browser preference, not proof that tracking is blocked.' });
-  emit('browser', 'Global Privacy Control', 'globalPrivacyControl' in navigator ? bool(navigator.globalPrivacyControl) : 'Not exposed', { note: 'A privacy preference, when the browser provides it.' });
-  emit('browser', 'Automation flag', bool(navigator.webdriver), { kind: 'estimate', note: 'Self-reported WebDriver flag. False does not prove that no automation or external control exists.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Navigator/webdriver' });
-  emit('browser', 'PDF viewer', 'pdfViewerEnabled' in navigator ? bool(navigator.pdfViewerEnabled) : 'Not exposed', { note: 'Built-in document viewer capability.' });
+  emit('browser', 'Global Privacy Control', typeof navigator.globalPrivacyControl === 'boolean' ? bool(navigator.globalPrivacyControl) : 'Not exposed', { kind: typeof navigator.globalPrivacyControl === 'boolean' ? 'observed' : 'unavailable', note: 'A privacy preference, when the browser provides it.' });
+  emit('browser', 'Automation flag', typeof navigator.webdriver === 'boolean' ? bool(navigator.webdriver) : 'Not exposed', { kind: typeof navigator.webdriver === 'boolean' ? 'estimate' : 'unavailable', note: 'Self-reported WebDriver flag. False does not prove that no automation or external control exists.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Navigator/webdriver' });
+  emit('browser', 'PDF viewer', typeof navigator.pdfViewerEnabled === 'boolean' ? bool(navigator.pdfViewerEnabled) : 'Not exposed', { kind: typeof navigator.pdfViewerEnabled === 'boolean' ? 'observed' : 'unavailable', note: 'Built-in document viewer capability.' });
   const plugins = safe(() => Array.from(navigator.plugins || []).map(p => p.name), []);
   emit('browser', 'Browser plugin hints', plugins.length ? `${plugins.length}: ${plugins.join(', ')}` : 'No plugins exposed', { note: 'Often just standardized PDF viewer entries. This is not a list of installed browser extensions.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Navigator/plugins' });
   emit('browser', 'Referrer', document.referrer || 'None supplied', { note: 'A referring URL may be sent under the previous page’s referrer policy. Other browsing history is not readable.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Document/referrer' });
@@ -98,10 +98,9 @@ export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecifi
   if (navigator.userAgentData) {
     emit('browser', 'Client-hint brands', safe(() => navigator.userAgentData.brands.map(b => `${b.brand} ${b.version}`).join(', ')), { note: 'Low-entropy browser hints only; high-entropy hints are not requested.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/NavigatorUAData' });
     emit('browser', 'Client-hint platform', navigator.userAgentData.platform, { kind: 'estimate', note: 'Browser-reported platform hint, not independently verified.' });
-    emit('browser', 'Client-hint mobile', bool(navigator.userAgentData.mobile), { kind: 'estimate', note: 'Browser-reported mobile flag; device choice and actual hardware may differ.' });
+    emit('browser', 'Client-hint mobile', bool(navigator.userAgentData.mobile), { kind: 'estimate', note: 'Browser-reported mobile flag; it does not independently identify the physical device.' });
   } else unavailable('browser', 'Low-entropy client hints', 'This browser does not expose navigator.userAgentData.');
 
-  emit('device', 'Your selected mode', getDevice(), { note: 'Provided by you during onboarding, not inferred by the website.' });
   emit('device', 'Logical processors hint', navigator.hardwareConcurrency, { kind: navigator.hardwareConcurrency ? 'estimate' : 'unavailable', note: 'Logical processors made available to the browser; may be reduced and is not the physical core count.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Navigator/hardwareConcurrency' });
   emit('device', 'Memory bucket', navigator.deviceMemory ? `${navigator.deviceMemory} GiB` : 'Not exposed', { kind: navigator.deviceMemory ? 'estimate' : 'unavailable', note: 'Coarsened and capped browser hint, not measured installed RAM.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Navigator/deviceMemory' });
   emit('device', 'Maximum touch points', navigator.maxTouchPoints ?? 'Not exposed', { note: 'Touch input capability; it cannot reliably distinguish a phone from a touch laptop.' });
@@ -145,42 +144,82 @@ export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecifi
     emit('display', 'Color depth', `${screen.colorDepth} bit`, { note: 'Browser-reported color depth, commonly standardized.', source: sources.screen });
     emit('display', 'Orientation', screen.orientation ? `${screen.orientation.type} · ${screen.orientation.angle}°` : 'Not exposed', { kind: screen.orientation ? 'observed' : 'unavailable', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Screen/orientation' });
     if (window.visualViewport) {
-      const v = visualViewport;
+      const v = window.visualViewport;
       emit('display', 'Visual viewport', `${Math.round(v.width)} × ${Math.round(v.height)} CSS px · ${v.scale.toFixed(2)}× scale`, { note: 'The visible content viewport, which may change with pinch zoom or an on-screen keyboard. The cause cannot be proved.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/VisualViewport' });
       emit('display', 'Visual viewport offset', `${Math.round(v.offsetLeft)}, ${Math.round(v.offsetTop)} CSS px`, { source: 'https://developer.mozilla.org/en-US/docs/Web/API/VisualViewport' });
     } else unavailable('display', 'Visual viewport', 'This browser does not expose the Visual Viewport API.', 'https://developer.mozilla.org/en-US/docs/Web/API/VisualViewport');
     emit('display', 'Fullscreen state', document.fullscreenElement ? 'This page has a fullscreen element' : 'Not fullscreen', { note: 'Only fullscreen state for this document.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Fullscreen_API' });
+    const v = window.visualViewport;
+    return {
+      layout: `${window.innerWidth} × ${window.innerHeight} CSS px`,
+      visual: v ? `${Math.round(v.width)} × ${Math.round(v.height)} CSS px · ${v.scale.toFixed(2)}× scale` : null,
+      visualOffset: v ? `${Math.round(v.offsetLeft)}, ${Math.round(v.offsetTop)} CSS px` : null,
+      screen: `${screen.width} × ${screen.height} CSS px`,
+      pixelRatio: `${window.devicePixelRatio}×`,
+      orientation: screen.orientation ? `${screen.orientation.type} · ${screen.orientation.angle}°` : null,
+    };
   };
-  updateDisplay();
-  const resized = throttle(() => {
+  let lastDisplay = updateDisplay();
+  let resizeTimer = null;
+  const flushDisplay = () => {
+    resizeTimer = null;
+    const next = updateDisplay();
+    const labels = { layout: 'Layout viewport', visual: 'Visual viewport', visualOffset: 'Visual offset', screen: 'Screen report', pixelRatio: 'Pixel ratio', orientation: 'Orientation' };
+    const changed = Object.keys(labels).filter(key => lastDisplay[key] !== next[key]);
+    lastDisplay = next;
+    if (!changed.length) return;
     counts.resizes += 1;
-    updateDisplay();
-    record('Viewport changed', `${innerWidth} × ${innerHeight} CSS px. The browser does not state whether a resize, zoom, keyboard, or mobile browser bar caused it.`);
-  }, 700);
+    record('Viewport changed', `${changed.map(key => `${labels[key]}: ${next[key] ?? 'not exposed'}`).join('; ')}. The cause is unknown.`);
+  };
+  const resized = () => { if (resizeTimer !== null) clearTimeout(resizeTimer); resizeTimer = setTimeout(flushDisplay, 180); };
+  cleanup.push(() => { if (resizeTimer !== null) clearTimeout(resizeTimer); });
   on(window, 'resize', resized);
   on(window, 'orientationchange', resized);
   on(screen.orientation, 'change', resized);
   on(window.visualViewport, 'resize', resized);
-  on(window.visualViewport, 'scroll', throttle(updateDisplay, 800));
-  on(document, 'fullscreenchange', () => { updateDisplay(); record('Fullscreen state changed', document.fullscreenElement ? 'An element in this page entered fullscreen.' : 'This page left fullscreen.'); });
+  on(window.visualViewport, 'scroll', resized);
+  on(document, 'fullscreenchange', () => { lastDisplay = updateDisplay(); record('Fullscreen state changed', document.fullscreenElement ? 'An element in this page entered fullscreen.' : 'This page left fullscreen.'); });
 
   const mediaQueries = [
-    ['Color preference', '(prefers-color-scheme: dark)', 'Dark', 'Light / unspecified'],
+    ['Color preference', '(prefers-color-scheme: dark)', 'Dark matched', 'Dark not matched'],
     ['Reduced-motion preference', '(prefers-reduced-motion: reduce)', 'Reduce', 'No preference'],
     ['Contrast preference', '(prefers-contrast: more)', 'More contrast', 'No more-contrast preference'],
     ['Forced colors', '(forced-colors: active)', 'Active', 'Inactive'],
-    ['Wide color gamut', '(color-gamut: p3)', 'P3 or wider exposed', 'sRGB / not exposed'],
-    ['Primary pointer', '(pointer: coarse)', 'Coarse', 'Fine / none'],
-    ['Hover capability', '(hover: hover)', 'Can hover', 'No primary hover'],
-    ['Any fine pointer', '(any-pointer: fine)', 'Available', 'Not exposed'],
+    ['Wide color gamut', '(color-gamut: p3)', 'P3 or wider matched', 'P3 not matched'],
   ];
   for (const [label, query, yes, no] of mediaQueries) {
     const mql = safe(() => matchMedia(query));
-    if (!mql) continue;
-    const update = () => emit('device', label, mql.matches ? yes : no, { note: `CSS media query: ${query}. Browser-exposed capability or preference.`, source: sources.media });
+    if (!mql || mql.media === 'not all' || typeof mql.matches !== 'boolean') { unavailable('device', label, 'A usable media-query result is not exposed.', sources.media); continue; }
+    let previous = null;
+    const update = () => {
+      const value = mql.matches ? yes : no;
+      const changed = previous !== null && value !== previous;
+      previous = value;
+      emit('device', label, value, { note: `CSS media query: ${query}. A negative match is a query result, not proof that the API is unavailable.`, source: sources.media });
+      return changed;
+    };
     update();
-    on(mql, 'change', () => { update(); record('Device preference changed', label); });
+    on(mql, 'change', () => { if (update()) record('Device preference changed', label); });
   }
+  const observeChoices = (label, feature, choices, multiple = false) => {
+    const queries = choices.map(value => [value, safe(() => matchMedia(`(${feature}: ${value})`))]);
+    let previous = null;
+    const update = () => {
+      const usable = queries.every(([, query]) => query && query.media !== 'not all' && typeof query.matches === 'boolean');
+      const matches = usable ? queries.filter(([, query]) => query.matches).map(([value]) => value) : [];
+      const conclusive = usable && matches.length > 0 && (multiple || matches.length === 1);
+      const value = conclusive ? matches.map(value => value[0].toUpperCase() + value.slice(1)).join(' + ') : 'No conclusive media-query report';
+      emit('device', label, value, { kind: conclusive ? 'observed' : 'unavailable', note: `Checks all ${feature} values (${choices.join(', ')}). No match or conflicting exclusive matches cannot distinguish unsupported/restricted reporting from other browser behavior.`, source: sources.media });
+      if (feature === 'any-pointer') emit('device', 'Any fine pointer', conclusive ? (matches.includes('fine') ? 'Fine pointer matched' : 'No fine pointer matched') : 'No conclusive media-query report', { kind: conclusive ? 'observed' : 'unavailable', note: 'A negative fine-pointer match with another matching pointer value is an observed result, not API unavailability.', source: sources.media });
+      if (previous !== null && previous !== value) record('Device preference changed', `${label}: ${value}`);
+      previous = value;
+    };
+    update();
+    for (const [, query] of queries) on(query, 'change', update);
+  };
+  observeChoices('Primary pointer', 'pointer', ['fine', 'coarse', 'none']);
+  observeChoices('Any pointer', 'any-pointer', ['fine', 'coarse', 'none'], true);
+  observeChoices('Hover capability', 'hover', ['hover', 'none']);
 
   if (navigator.getBattery) {
     emit('device', 'Battery information', 'Checking browser support…', { note: 'Battery Status API does not request a user permission in supporting browsers.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Battery_Status_API' });
@@ -233,7 +272,7 @@ export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecifi
   on(document, 'resume', () => { lastClock = performance.now(); visible = !document.hidden; focused = document.hasFocus(); updateLifecycle(); record('Page resumed', 'Execution resumed after the browser suspended this page.'); });
 
   // Sample page interactions without retaining text, element contents, or paths.
-  emit('activity', 'Text entered in this page', 'Readable by site scripts · discarded here', { note: 'Scripts can observe key/input events and read values in their own form fields without a new browser permission. This demo retains categories and counts only; typed characters, strings, and form values are discarded.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Element/input_event' });
+  emit('activity', 'Text entered in this page', 'Readable by site scripts · discarded here', { kind: 'context', note: 'Capability explanation, not a captured text value. Scripts can observe key/input events and read values in their own form fields without a new browser permission. This demo retains categories and counts only; typed characters, strings, and form values are discarded.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Element/input_event' });
   on(window, 'pointermove', throttle(event => {
     activity();
     provenanceSignal('activity', 'Last pointer event provenance', event);
@@ -329,7 +368,7 @@ export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecifi
     countSignals();
     record(`${event.isTrusted === false ? 'Synthetic page' : 'Page'} ${name} event`, `${formats.length ? `Format labels: ${formats.join(', ')}.` : 'No format labels exposed.'} Contents were not read. ${provenance(event)}.`);
   }, true);
-  emit('clipboard', 'System clipboard at baseline', 'Not read', { kind: 'unavailable', note: 'Baseline does not call clipboard.read/readText. Use a permission card to explicitly test clipboard access.', source: sources.clipboard });
+  emit('clipboard', 'System clipboard at baseline', 'Not read', { kind: 'context', note: 'No clipboard measurement was attempted. Baseline does not call clipboard.read/readText. Use a permission card to explicitly test clipboard access.', source: sources.clipboard });
   on(window, 'beforeprint', () => record('Print flow started', 'Browser print lifecycle event. It does not report screenshot capture.'));
   on(window, 'afterprint', () => record('Print flow ended', 'This does not prove that a print or PDF file was saved.'));
   countSignals();
@@ -340,9 +379,9 @@ export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecifi
       emit('performance', 'Navigation type', nav.type, { note: 'Navigation into this document, such as reload or back/forward.', source: sources.performance });
       emit('performance', 'DOM ready timing', nav.domContentLoadedEventEnd ? `${Math.round(nav.domContentLoadedEventEnd)} ms` : 'Still loading', { note: 'Elapsed time from this document’s navigation; browser precision may be reduced.', source: sources.performance });
       emit('performance', 'Page load timing', nav.loadEventEnd ? `${Math.round(nav.loadEventEnd)} ms` : 'Still loading', { note: 'Local navigation timing, not a cross-site browsing record.', source: sources.performance });
-      emit('performance', 'Response timing', `${Math.round(nav.responseEnd - nav.requestStart)} ms`, { kind: 'estimate', note: 'Browser timing for this document’s response. Localhost performance is not internet speed.', source: sources.performance });
+      emit('performance', 'Response timing', `${Math.round(nav.responseEnd - nav.requestStart)} ms`, { kind: 'estimate', note: 'Browser timing for this document’s response; it is not a general internet speed measurement.', source: sources.performance });
     }
-    emit('performance', 'Resource timing entries', performance.getEntriesByType('resource').length, { note: 'Resource records belonging to this page. This demo never uploads the records or requests an external probe.', source: sources.performance });
+    emit('performance', 'Resource timing entries', performance.getEntriesByType('resource').length, { note: 'Counts existing timing records for this page. This reading does not upload those records or initiate a probe; separate connection/provider requests follow the connection panel disclosure.', source: sources.performance });
     const paint = performance.getEntriesByType('paint').find(e => e.name === 'first-contentful-paint');
     emit('performance', 'First contentful paint', paint ? `${Math.round(paint.startTime)} ms` : 'Not exposed / not recorded', { kind: paint ? 'observed' : 'unavailable', source: sources.performance });
     if (performance.memory) emit('performance', 'JavaScript heap estimate', `${bytes(performance.memory.usedJSHeapSize)} / ${bytes(performance.memory.jsHeapSizeLimit)} limit`, { kind: 'estimate', note: 'Non-standard browser heap statistics; may include shared memory and are not system RAM.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/Performance/memory' });
@@ -361,88 +400,130 @@ export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecifi
     emit('performance', 'Long tasks observed', 0, { note: 'Main-thread tasks over 50 ms observed after starting.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/PerformanceLongTaskTiming' });
   } else unavailable('performance', 'Long tasks observed', 'Long Task observation is not supported.', 'https://developer.mozilla.org/en-US/docs/Web/API/PerformanceLongTaskTiming');
 
-  // Graphics features are publicly exposed browser capabilities, not extensions.
-  const glCanvas = document.createElement('canvas');
-  const gl = safe(() => glCanvas.getContext('webgl', { powerPreference: 'low-power', antialias: false }) || glCanvas.getContext('experimental-webgl'));
-  if (gl) {
-    graphics.vendor = safe(() => gl.getParameter(gl.VENDOR), 'Unavailable');
-    graphics.renderer = safe(() => gl.getParameter(gl.RENDERER), 'Unavailable');
-    graphics.version = safe(() => gl.getParameter(gl.VERSION), 'Unavailable');
-    graphics.extensions = safe(() => gl.getSupportedExtensions(), []) || [];
-    emit('fingerprint', 'WebGL renderer', `${graphics.vendor} · ${graphics.renderer}`, { note: 'Browser-reported graphics renderer. It may be generic or privacy-reduced.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/WEBGL_debug_renderer_info' });
-    emit('fingerprint', 'WebGL version', graphics.version, { source: 'https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API' });
-    emit('fingerprint', 'Graphics extensions', `${graphics.extensions.length} capabilities: ${graphics.extensions.join(', ') || 'none'}`, { note: 'WebGL graphics capabilities only. These are not installed browser extensions or add-ons.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Using_Extensions' });
-    emit('fingerprint', 'Maximum texture size', `${safe(() => gl.getParameter(gl.MAX_TEXTURE_SIZE), 'Unknown')} px`, { note: 'An exposed graphics capability, not a hardware identity.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/getParameter' });
-    const debug = safe(() => gl.getExtension('WEBGL_debug_renderer_info'));
-    if (debug) {
-      graphics.unmaskedVendor = safe(() => gl.getParameter(debug.UNMASKED_VENDOR_WEBGL));
-      graphics.unmaskedRenderer = safe(() => gl.getParameter(debug.UNMASKED_RENDERER_WEBGL));
-      emit('fingerprint', 'Exposed GPU hint', `${graphics.unmaskedVendor} · ${graphics.unmaskedRenderer}`, { kind: 'estimate', note: 'Driver hint exposed by this browser. It can be masked, virtualized, or spoofed; no unique GPU serial number is exposed.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/WEBGL_debug_renderer_info' });
-    } else unavailable('fingerprint', 'Exposed GPU hint', 'The debug-renderer extension is unavailable or blocked for privacy.', 'https://developer.mozilla.org/en-US/docs/Web/API/WEBGL_debug_renderer_info');
-    safe(() => gl.getExtension('WEBGL_lose_context')?.loseContext());
-  } else unavailable('fingerprint', 'WebGL capabilities', 'Graphics context could not be created; it may be disabled, unsupported, or privacy-restricted.', 'https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API');
-
+  // v2 has fixed property order and explicit unavailable values. Timestamps,
+  // viewport/window dimensions, event counts, and user configuration are excluded.
+  const fingerprintSchema = 'observatory-fingerprint/2';
+  const fontCandidates = ['Arial', 'Georgia', 'Times New Roman', 'Courier New', 'Verdana', 'Segoe UI', 'Roboto', 'Helvetica'];
+  const groupingFields = [
+    'schemaVersion', 'browser.userAgent', 'browser.platform', 'browser.languages', 'browser.timeZone',
+    'browser.logicalProcessors', 'browser.memoryGiBBucket', 'browser.maxTouchPoints',
+    'screen.width', 'screen.height', 'screen.colorDepth', 'screen.pixelRatio',
+    'graphics.status', 'graphics.vendor', 'graphics.renderer', 'graphics.version', 'graphics.extensions',
+    'graphics.maxTextureSize', 'graphics.unmaskedVendor', 'graphics.unmaskedRenderer',
+    'canvas.status', 'canvas.hash', 'fonts.status', 'fonts.widths[].family', 'fonts.widths[].width',
+  ];
+  const cloneFingerprint = value => value ? JSON.parse(JSON.stringify(value)) : null;
+  const stringValue = read => safe(() => { const value = read(); return typeof value === 'string' ? value : null; });
+  const numberValue = read => safe(() => { const value = read(); return Number.isFinite(value) ? value : null; });
+  const collectGraphics = () => {
+    const result = { status: 'unavailable', vendor: null, renderer: null, version: null, extensions: null, maxTextureSize: null, unmaskedVendor: null, unmaskedRenderer: null };
+    let gl = null;
+    try {
+      const canvas = document.createElement('canvas');
+      gl = canvas.getContext('webgl', { powerPreference: 'low-power', antialias: false }) || canvas.getContext('experimental-webgl');
+      if (!gl) return result;
+      result.status = 'available';
+      result.vendor = stringValue(() => gl.getParameter(gl.VENDOR));
+      result.renderer = stringValue(() => gl.getParameter(gl.RENDERER));
+      result.version = stringValue(() => gl.getParameter(gl.VERSION));
+      result.maxTextureSize = numberValue(() => gl.getParameter(gl.MAX_TEXTURE_SIZE));
+      result.extensions = safe(() => {
+        const values = gl.getSupportedExtensions();
+        return Array.isArray(values) ? [...new Set(values.filter(value => typeof value === 'string'))].sort() : null;
+      });
+      const debug = safe(() => gl.getExtension('WEBGL_debug_renderer_info'));
+      if (debug) {
+        result.unmaskedVendor = stringValue(() => gl.getParameter(debug.UNMASKED_VENDOR_WEBGL));
+        result.unmaskedRenderer = stringValue(() => gl.getParameter(debug.UNMASKED_RENDERER_WEBGL));
+      }
+    } catch { /* Preserve explicit nulls, not a previous snapshot's GPU values. */ }
+    finally { if (gl) safe(() => gl.getExtension('WEBGL_lose_context')?.loseContext()); }
+    return result;
+  };
+  const collectRendering = () => {
+    let pixels = null;
+    let widths = null;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 320; canvas.height = 100;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return { pixels, widths };
+      // Font widths are measured independently of whether pixel readback works.
+      widths = safe(() => fontCandidates.map(family => {
+        ctx.font = `32px "${family}", monospace`;
+        const width = ctx.measureText('mmmmmmmmWWWWWWii012345').width;
+        if (!Number.isFinite(width)) throw new Error('Unavailable width');
+        return { family, width: Number(width.toFixed(2)) };
+      }));
+      ctx.fillStyle = '#e8eef4'; ctx.fillRect(0, 0, 320, 100);
+      const gradient = ctx.createLinearGradient(0, 0, 320, 100);
+      gradient.addColorStop(0, '#264653'); gradient.addColorStop(1, '#e76f51');
+      ctx.fillStyle = gradient; ctx.fillRect(4, 4, 312, 92);
+      ctx.font = '19px Arial'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#ffffff';
+      ctx.fillText('Observatory · AaBb 012345', 12, 36);
+      ctx.font = '17px serif'; ctx.fillStyle = '#081225'; ctx.fillText('Canvas render sample', 13, 62);
+      ctx.globalCompositeOperation = 'multiply'; ctx.beginPath(); ctx.arc(270, 50, 30, 0, Math.PI * 2); ctx.fillStyle = '#f4a261'; ctx.fill();
+      pixels = new Uint8Array(ctx.getImageData(0, 0, 320, 100).data);
+    } catch { /* Fonts can remain available even if drawing or pixel access fails. */ }
+    return { pixels, widths };
+  };
   const digest = async input => {
     if (!globalThis.crypto?.subtle) throw new Error('Hashing unavailable');
     const buffer = typeof input === 'string' ? new TextEncoder().encode(input) : input;
     const hash = await crypto.subtle.digest('SHA-256', buffer);
-    return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('').slice(0, 20);
+    const bytes = new Uint8Array(hash);
+    if (bytes.byteLength !== 32) throw new Error('Invalid SHA-256 result');
+    return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('').slice(0, 20);
+  };
+  const publishFingerprint = result => {
+    const { graphics, fonts } = result.hashInputs;
+    emit('fingerprint', 'Fingerprint schema version', result.schemaVersion, { kind: 'context', note: 'Compare signatures only with the same schema and drawing/measurement recipe.', source: sources.fingerprint });
+    emit('fingerprint', 'Grouping hash input fields', result.groupingFields.join(', '), { kind: 'context', note: 'These exact fields, in this order, are included in hashInputs. Timestamp and ordinary window/viewport dimensions are excluded. The screen report, color depth, and pixel ratio are included. The complete input snapshot is available in the fingerprint result/export.', source: sources.fingerprint });
+    emit('fingerprint', 'WebGL capabilities', graphics.status === 'available' ? 'Fresh context collected' : 'Unavailable on this calculation', { kind: graphics.status === 'available' ? 'observed' : 'unavailable', note: 'A fresh graphics context is sampled and released on each completed calculation.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API' });
+    const graphicsRows = [
+      ['WebGL renderer', graphics.vendor || graphics.renderer ? [graphics.vendor, graphics.renderer].filter(Boolean).join(' · ') : null, 'Browser-reported rendering implementation; it may be generic, masked, or spoofed.'],
+      ['WebGL version', graphics.version, 'Version exposed by this fresh graphics context.'],
+      ['Graphics extensions', graphics.extensions ? `${graphics.extensions.length} capabilities: ${graphics.extensions.join(', ') || 'none'}` : null, 'Graphics capabilities, not installed browser extensions. Names are sorted for a deterministic snapshot.'],
+      ['Maximum texture size', graphics.maxTextureSize === null ? null : `${graphics.maxTextureSize} px`, 'An exposed graphics capability, not a hardware identity.'],
+      ['Exposed GPU hint', graphics.unmaskedVendor || graphics.unmaskedRenderer ? [graphics.unmaskedVendor, graphics.unmaskedRenderer].filter(Boolean).join(' · ') : null, 'Optional driver hint. It may be masked, virtualized, or spoofed; no GPU serial number is exposed.'],
+    ];
+    for (const [key, value, note] of graphicsRows) emit('fingerprint', key, value ?? 'Unavailable on this calculation', { kind: value === null ? 'unavailable' : key === 'Exposed GPU hint' ? 'estimate' : 'observed', note, source: 'https://developer.mozilla.org/en-US/docs/Web/API/WEBGL_debug_renderer_info' });
+    emit('fingerprint', 'Fixed font width samples', fonts.widths ? fonts.widths.map(({ family, width }) => `${family}:${width.toFixed(2)}`).join(' · ') : 'Unavailable on this calculation', { kind: fonts.widths ? 'estimate' : 'unavailable', note: 'Fresh widths for eight fixed font candidates. Fallbacks and aliases can match; these are not a verified installed-font inventory.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/measureText' });
+    emit('fingerprint', 'Canvas render hash', result.canvasHash ?? 'Unavailable on this calculation', { kind: result.canvasHash ? 'estimate' : 'unavailable', note: 'First 80 bits of SHA-256 for a fixed local drawing. A rendering summary, not an identity. This demo does not use the signature to track you across websites or upload it; it may be included in your local export.', source: sources.fingerprint });
+    emit('fingerprint', 'Browser grouping hash', result.groupingHash ?? 'Unavailable on this calculation', { kind: result.groupingHash ? 'estimate' : 'unavailable', note: 'First 80 bits of SHA-256 over the versioned, ordered hashInputs snapshot. Similar devices can match and one device can change. Ordinary window resizing does not necessarily change it. This demo does not use these signatures to track you across websites.', source: sources.fingerprint });
   };
   const fingerprint = () => {
-    if (stopped) return Promise.resolve(latestFingerprint);
-    if (fingerprintPromise) return fingerprintPromise;
+    if (stopped) return Promise.resolve(null);
+    if (fingerprintPromise) return fingerprintPromise.then(cloneFingerprint);
+    const generation = ++fingerprintGeneration;
+    const capturedAt = new Date().toISOString();
+    // All browser/graphics/rendering inputs are captured synchronously before
+    // awaiting hashing, so a calculation never mixes earlier cached GPU values.
+    const browser = {
+      userAgent: stringValue(() => navigator.userAgent),
+      platform: stringValue(() => navigator.platform),
+      languages: safe(() => Array.isArray(navigator.languages) ? navigator.languages.filter(value => typeof value === 'string').slice() : null),
+      timeZone: stringValue(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+      logicalProcessors: numberValue(() => navigator.hardwareConcurrency),
+      memoryGiBBucket: numberValue(() => navigator.deviceMemory),
+      maxTouchPoints: numberValue(() => navigator.maxTouchPoints),
+    };
+    const display = { width: numberValue(() => screen.width), height: numberValue(() => screen.height), colorDepth: numberValue(() => screen.colorDepth), pixelRatio: numberValue(() => window.devicePixelRatio) };
+    const graphics = collectGraphics();
+    const rendering = collectRendering();
+    const result = { schemaVersion: fingerprintSchema, capturedAt, status: 'unavailable', hashAlgorithm: 'SHA-256, first 80 bits', canvasHash: null, groupingHash: null, groupingFields: [...groupingFields], hashInputs: null, unique: false, stored: false };
     fingerprintPromise = (async () => {
-      let canvasHash = null;
-      let fontMetrics = [];
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = 320; canvas.height = 100;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        if (!ctx) throw new Error('Canvas unavailable');
-        ctx.fillStyle = '#e8eef4'; ctx.fillRect(0, 0, 320, 100);
-        const gradient = ctx.createLinearGradient(0, 0, 320, 100);
-        gradient.addColorStop(0, '#264653'); gradient.addColorStop(1, '#e76f51');
-        ctx.fillStyle = gradient; ctx.fillRect(4, 4, 312, 92);
-        ctx.font = '19px Arial'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#ffffff';
-        ctx.fillText('Observatory · AaBb 012345', 12, 36);
-        ctx.font = '17px serif'; ctx.fillStyle = '#081225'; ctx.fillText('Canvas render sample', 13, 62);
-        ctx.globalCompositeOperation = 'multiply'; ctx.beginPath(); ctx.arc(270, 50, 30, 0, Math.PI * 2); ctx.fillStyle = '#f4a261'; ctx.fill();
-        canvasHash = await digest(ctx.getImageData(0, 0, 320, 100).data);
-        emit('fingerprint', 'Canvas render hash', canvasHash, { kind: 'estimate', note: 'SHA-256 prefix of a fixed local drawing. A rendering pattern, not a unique ID or proof of identity. Not persistently stored by this page or uploaded; included only if you export the session report.', source: sources.fingerprint });
-        const sample = 'mmmmmmmmWWWWWWii012345';
-        const candidates = ['Arial', 'Georgia', 'Times New Roman', 'Courier New', 'Verdana', 'Segoe UI', 'Roboto', 'Helvetica'];
-        fontMetrics = candidates.map(font => {
-          ctx.font = `32px "${font}", monospace`;
-          return `${font}:${ctx.measureText(sample).width.toFixed(2)}`;
-        });
-        emit('fingerprint', 'Fixed font width samples', fontMetrics.join(' · '), { kind: 'estimate', note: 'Widths for eight fixed font candidates. Fallbacks and aliases can produce the same width; this is not a confirmed list of installed fonts. Full local font enumeration is a separate permission test.', source: 'https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/measureText' });
-      } catch {
-        unavailable('fingerprint', 'Canvas render hash', 'Pixel readback or local hashing was unavailable. Privacy features may restrict it.', sources.fingerprint);
-      }
-      try {
-        const grouping = {
-          userAgent: navigator.userAgent,
-          platform: navigator.platform,
-          languages: navigator.languages,
-          zone: safe(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
-          cores: navigator.hardwareConcurrency,
-          memory: navigator.deviceMemory,
-          touchPoints: navigator.maxTouchPoints,
-          screen: [screen.width, screen.height, screen.colorDepth, devicePixelRatio],
-          graphics,
-          canvasHash,
-          fontMetrics,
-        };
-        const groupingHash = await digest(JSON.stringify(grouping));
-        latestFingerprint = { canvasHash, groupingHash, unique: false, stored: false };
-        emit('fingerprint', 'Browser grouping hash', groupingHash, { kind: 'estimate', note: 'SHA-256 prefix combining the displayed browser, display, and rendering hints. Similar devices can match and one device can change. No uniqueness percentage, identity, cross-site tracking, or persistent storage.', source: sources.fingerprint });
-        record('Local fingerprint sample ready', 'Canvas and browser grouping hashes were computed in memory. They are not unique identities and were not uploaded.', 'estimate');
-      } catch {
-        unavailable('fingerprint', 'Browser grouping hash', 'Local cryptographic hashing is unavailable in this context.', sources.fingerprint);
-      }
-      return latestFingerprint;
-    })().finally(() => { fingerprintPromise = null; });
-    return fingerprintPromise;
+      if (rendering.pixels) { try { result.canvasHash = await digest(rendering.pixels); } catch { /* Explicit unavailable value. */ } }
+      if (stopped || generation !== fingerprintGeneration) return null;
+      result.hashInputs = { schemaVersion: fingerprintSchema, browser, screen: display, graphics, canvas: { status: result.canvasHash ? 'available' : 'unavailable', hash: result.canvasHash }, fonts: { status: rendering.widths ? 'available' : 'unavailable', widths: rendering.widths } };
+      try { result.groupingHash = await digest(JSON.stringify(result.hashInputs)); result.status = 'ready'; } catch { /* No previous grouping hash is reused. */ }
+      if (stopped || generation !== fingerprintGeneration) return null;
+      latestFingerprint = result;
+      publishFingerprint(result);
+      record('Local fingerprint sample ready', result.groupingHash ? 'Fresh browser, screen, graphics, canvas, and font inputs were summarized locally. The versioned input snapshot does not establish a unique identity.' : 'Fresh inputs were collected, but local hashing is unavailable. Previous hashes are not reused.', 'estimate');
+      return result;
+    })().finally(() => { if (generation === fingerprintGeneration) fingerprintPromise = null; });
+    return fingerprintPromise.then(cloneFingerprint);
   };
   fingerprint();
 
@@ -454,21 +535,23 @@ export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecifi
     ['Unfocused keystrokes / copies', 'Not observable', 'Typing and copy events in another app or tab are not delivered to this document. Background execution can also be suspended. Clipboard access has separate permission, gesture, and focus restrictions.', sources.clipboard],
     ['External site control', 'No universal proof', 'The WebDriver flag is only a hint. A page cannot reliably identify remote-control software, OS automation, accessibility tools, or all injected extensions. Viewport differences do not prove DevTools is open.', 'https://developer.mozilla.org/en-US/docs/Web/API/Navigator/webdriver'],
     ['Private files and passwords', 'Not readable without selection or access', 'A website can read text you submit to its own fields, but cannot browse arbitrary local files, other apps, or your password manager. This demo intentionally discards typed text.', 'https://developer.mozilla.org/en-US/docs/Web/API/File_API/Using_files_from_web_applications'],
-    ['Public IP and server logs', 'No external IP lookup', 'A production server can observe the connection IP address and request metadata without a browser permission prompt. This localhost demo makes no outside request and does not infer your public IP.', 'https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview'],
+    ['Public IP and server logs', 'Depends on the receiving server', 'A server sees the connection reaching it and ordinary request metadata without a browser prompt. Connection checks, any disclosed provider lookup, aggregate visit counting, and hosting logs have separate behavior described in this site’s privacy information. IP addresses do not establish identity or precise physical location.', 'https://developer.mozilla.org/en-US/docs/Web/HTTP/Overview'],
     ['Camera, mic, location, screen', 'Explicit separate access', 'These capabilities have browser permission, user-selection, secure-context, and browser-support restrictions. The permission lab requests one capability only after you click it.', 'https://developer.mozilla.org/en-US/docs/Web/API/Permissions_API'],
     ['Physical identity or attention', 'Cannot be established', 'A browser fingerprint is a collection of changeable hints. Focus, visibility, and idle estimates cannot verify who you are, what you are looking at, or whether you are present.', sources.fingerprint],
     ['Universal capability coverage', 'Browser and device dependent', 'APIs vary by browser, OS, secure context, policy, and privacy settings. No page can promise every imaginable permission or all possible data from every website.', 'https://developer.mozilla.org/en-US/docs/Web/API/Permissions_API'],
   ];
-  for (const [label, value, note, source] of boundaries) emit('boundaries', label, value, { kind: 'unavailable', note, source });
+  for (const [label, value, note, source] of boundaries) emit('boundaries', label, value, { kind: 'context', note, source });
 
   const clockTimer = setInterval(() => { accrueTime(); updateLifecycle(); }, 1000);
   cleanup.push(() => clearInterval(clockTimer));
-  record('Baseline observation started', 'No new browser permissions requested. Signals stay in this page’s memory; no analytics or external requests.');
+  record('Baseline observation started', 'These browser observations request no new permission and remain in page memory unless exported. Connection checks, aggregate visit counting, and hosting logs are described separately in the site’s privacy information.');
   return {
     stop() {
       if (stopped) return;
       accrueTime();
       stopped = true;
+      fingerprintGeneration += 1;
+      latestFingerprint = null;
       for (const dispose of cleanup.splice(0)) safe(dispose);
     },
     clearCounts() {
@@ -492,7 +575,7 @@ export function startSensors({ setSignal, addEvent, getDevice = () => 'unspecifi
         focused,
         visible,
         stopped,
-        fingerprint: latestFingerprint ? { ...latestFingerprint } : null,
+        fingerprint: cloneFingerprint(latestFingerprint),
       };
     },
   };

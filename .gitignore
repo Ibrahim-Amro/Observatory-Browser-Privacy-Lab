@@ -10,3 +10,5 @@ Thumbs.db
 **/*.mmdb
 **/*.mmdb.gz
 observatory-data/
+**/visitor-state.json
+**/visitor-stats.json

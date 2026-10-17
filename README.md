@@ -1,130 +1,100 @@
 # Observatory — Browser Privacy Lab
 
-**Live website: [ia582.brighton.domains/observatory](https://ia582.brighton.domains/observatory/)**
+**[Open the live website](https://ia582.brighton.domains/observatory/)** · [Source code](https://github.com/Ibrahim-Amro/Observatory-Browser-Privacy-Lab)
+Built by **Ibrahim Amro** · [LinkedIn](https://www.linkedin.com/in/ibrahimamro/)
 
-A browser privacy education website that shows what a page can observe about your browser, device and activity, then lets you try individual permission-gated capabilities. Hosted on Brighton Domains using Apache and PHP. No account, dependency installation or frontend build is required.
+An approachable, working browser privacy learning tool: **What can a website actually see?** Copy sample text, click a harmless target, switch tabs and inspect the evidence. Read the explanations without starting a session. Developer tools remain available for controlled privacy-extension comparisons.
 
-Built by **Ibrahim Amro** · [LinkedIn](https://www.linkedin.com/in/ibrahimamro/) · [Source code](https://github.com/Ibrahim-Amro/Observatory-Browser-Privacy-Lab)
+## Use the lab
 
-The split welcome screen pairs an animated evidence preview with the introduction and device choice. The preview is explicitly illustrative: its example events are not readings from the visitor's device. **Pause preview / Play preview** controls the animation, and a reduced-motion preference starts it paused. The real observation session begins only after choosing Computer or Mobile and entering the dashboard.
+1. Read the question cards, then select **Try it on my browser**. No account, device selection or new permission request is needed. Saved browser grants may already exist; protected demos do not start automatically.
+2. Try the guided copy, click, tab-visibility and screenshot-clue experiments. Each separates the observed event from what it cannot prove. The ordinary copy demo records event/formats, not clipboard contents.
+3. Watch **Live Evidence**. The visible **Expert mode** switch adds technical readings and diagnostic hints without requesting permissions or clearing evidence. **Filters** contains search, category, evidence type, startup inclusion and clear-filter controls only. Technical categories are unavailable until Expert mode is explicitly enabled.
+4. Open **Permission Lab** for the full catalogue. Each experiment explains access before requesting it; off stops collection but does not revoke saved browser grants. Unsupported/blocked capabilities explain why. Pending requests can be cancelled, snapshots repeated, and failures retried.
+5. Use **Fingerprints** for fresh, versioned local rendering/browser snapshots. Expand raw values and inspect the exact ordered grouping fields. Hashes can change, collide or be shared; they do not establish identity or uniqueness.
+6. Use **Compare snapshots** to download a baseline, change an extension configuration, reload when needed and import the baseline. Compare changed, unchanged, unavailable and unstable readings. Files are read locally as bounded JSON (maximum 2 MB), validated and displayed as text; no import is uploaded or executed. Different fingerprint schemas are not compared as equivalent hashes. Matching values do not prove an extension failed.
+7. Export a versioned JSON session report or end/reset. Reports can contain personal IP/header/location or permission-derived readings; inspect before sharing. Typed text, clipboard payloads, credentials and raw media are not included. Feedback says **Download requested**, because a page cannot confirm that the browser saved the file.
 
-## Explore the live website
+## Navigation and evidence
 
-1. Open the [live demo](https://ia582.brighton.domains/observatory/) and choose Computer or Mobile.
-2. Enter with no new permission requests. Previously saved browser grants may still exist; protected demos do not start automatically.
-3. Watch the large live evidence feed. Use **Filter & settings** to search, select a category or switch Basic mode off for Extensive mode.
-4. Inspect activity totals, the connection IP and approximate location, the first-second startup snapshot, page checks and compact permission switches. **Check connection** performs a fresh same-origin check.
-5. Turn on a supported experiment to request access through the browser. Expand Details to understand what access opens, what remains hidden and the latest captured readings. Unavailable experiments explain their browser, context or policy restriction.
-6. Turn demos off to stop their collection, export a local JSON report, or end and reset the session.
+Public links `#questions`, `#how-it-works`, `#developer` and `#privacy` remain useful before or during a session. They scroll to and focus a substantial visible destination, including when already on screen. A running session remains active while reading public explanations; **Return to my session** returns to the overview.
 
-Choosing Mobile changes the guidance; it does not claim to detect your hardware. Available features depend on the browser, operating system, device and browser policy.
+Dashboard routes are `#overview`, `#signals`, `#permissions`, `#fingerprints`, `#boundaries`, `#guide` and `#compare`. Direct links/reloads start a fresh in-memory session at that view; navigation supports browser Back/Forward. Unknown routes return to the introduction with feedback. Reset clears the current session; going Back afterwards cannot recover deleted evidence.
 
-## Features
+The bounded feed retains the latest 600 entries. **All-time session totals**, observed activity counts and the frozen first-second snapshot are separate from retained entries and survive filtering/feed clearing. Explanatory limitations and unavailable/context entries are not counted as successful startup observations. Synthetic events are diagnostic entries, separate from browser-dispatched activity; trusted provenance does not prove a physical human action.
 
-- **Illustrative welcome preview:** a looping example evidence feed, with pause/play and reduced-motion support, before any session readings are collected.
-- **Live evidence first:** actions, clues and changed readings, with category and text filters. Searches support aliases such as copied, snipping, tab switch and resize.
-- **Basic / Extensive:** Basic shows clicks, actual copy/cut/paste events, screenshot shortcut clues, focus changes, swipes and resizing. Extensive includes browser/device/network readings, permission results and integrity hints. Modes and filters affect display only.
-- **Independent counters:** signal snapshots do not count as user actions. Lifetime counters survive filtering and feed clearing. They include events no longer retained in the feed.
-- **Startup snapshot:** available signals and non-reading event entries captured during the first second after entering the dashboard are frozen separately. Event entries can include session metadata; they are not all human actions.
-- **Live inventory:** current browser, device, display, network, performance, activity and permission readings with explanations and source links.
-- **Connection checks:** the connection IP seen by this host, previous address, last successful check and verified address-change history. Checks run every 30 seconds while visible and online, on return/focus, when the browser reports online, and through the manual button.
-- **Offline IP location:** approximate city, region and country from a local DB-IP database, plus ASN and organization when the optional ASN database supplies them. The visitor's IP is never sent to a separate geolocation service.
-- **Permission experiments:** camera, microphone, location, clipboard, screen sharing, notifications, device sensors, Bluetooth/USB/HID/serial, files/folders, fonts, fullscreen and other supported capabilities.
-- **Page and JavaScript checks:** watched API reference changes, added script elements, selected attribute changes and exposed extension URL scheme hints.
-- **Fingerprint demonstrations:** local rendering/configuration hashes with explicit limits; no identity or population uniqueness claims.
-- **Local export and reset:** a JSON report downloads only when clicked. No observation database or analytics service.
+## Connection IP architecture
 
-The feed retains the latest **600 entries**. Unchanged values, duplicate action-count updates and some high-frequency readings are omitted or sampled. The inventory retains the latest surfaced value independently. Export includes retained evidence plus lifetime summary counts, not an unlimited history.
+The app uses only this website's same-origin PHP endpoint, `api/context.php`. It makes an initial check and throttled manual refreshes (minimum five seconds), with no continuous polling or automatic focus/return request by default. No ipify or external IP provider is contacted, so the CSP remains self-only and no outside provider disclosure/permission flow is needed.
 
-## Permission switch behavior
+The PHP endpoint validates and canonicalizes `REMOTE_ADDR` before optional offline geolocation. Forwarded headers are ignored unless the immediate peer exactly matches an address explicitly configured in `OBSERVATORY_TRUSTED_PROXIES`. Leave that environment variable empty on the current host. Only a trusted proxy's validated single client address can replace the peer; arbitrary forwarding chains are rejected.
 
-Switches control this demo's use of a capability, not saved grants in browser settings. Turning off stops live collection without erasing readings already captured. Revoke saved grants through the browser's site settings.
+A connection IP is the address **seen by this website**, not a real-IP verdict, identity or proof of VPN state. IPv4 and IPv6 keep separate comparison baselines. A provider/provenance switch starts a new baseline and is never counted as a verified change. Failed, invalid, offline or hidden-page checks preserve the last valid value with a stale label and the last successful timestamp; they do not invent a change. HTTP, timeout, JSON/schema and network/blocked failure states are distinguished as far as browser fetch permits.
 
-Supported switches perform a real browser request or capability action. API availability does not guarantee permission, compatible hardware or a successful result. Unsupported controls are labelled **Unavailable**, disabled, and accompanied by an explicit reason, such as a missing browser API, an insecure context, an embedding restriction or a known Permissions Policy block. A permission grant cannot add an API the browser lacks.
+Approximate city/region/country and ASN are optional database estimates, read from private offline DB-IP files. Missing/corrupt/blocked geodata cannot suppress a valid IP. Database source/date is shown separately, coordinates are not invented, and this is separate from the explicit permission-based device-location demo. A VPN, proxy or shared gateway may be located elsewhere. The server makes no visitor-IP calls to an outside geolocation service.
 
-While a request is pending, the switch shows **Cancel**. Cancelling invalidates the demo request and releases any resource that arrives late; an already-open native browser prompt may still need dismissal. Denial leaves the demo off and exposes a **Try again** action with the browser's result. Completed one-off checks show an On snapshot with no ongoing sampling and offer **Run again** to repeat the chooser or read. **Details** explains boundaries and shows captured values; **See live readings** opens the matching inventory. Active clipboard checks also provide **Check now**, with a busy state while the read runs.
+## Hosting repair and deployment
 
-Live streams/watchers remain On until stopped or released by the browser. Camera and screen previews stay local; microphone sound level is measured without recording audio. Both permission views share the same state, so changes in the overview appear in the Permission lab.
+The deployed HTTP500 was reproduced and repaired on 17 October 2026. cPanel `stat` showed entry PHP files at **0666**; PHP syntax was valid on host PHP8.2.34. Restricting the files to **0644**, without changing their code, restored HTTP200 JSON from the context endpoint. The release helper now explicitly writes Unix **0644** ZIP modes, avoiding Windows source-file permissions being copied into the upload. Do not deploy group/world-writable PHP files.
 
-## Connection IP and approximate location
-
-The monitor checks this site's `api/context.php` endpoint without credentials or an external IP-lookup service. After the first valid response establishes a baseline, an address change is counted only when another successful, validated response contains a different normalized address. Failed, invalid, offline, hidden-page or timed-out checks preserve the last verified address and do not invent a change. Checks pause when hidden/offline and resume when the page returns or the browser reports online. Transitions between successful checks can be missed; this is a sampled view of the connection reaching this host.
-
-The PHP endpoint uses `REMOTE_ADDR`, never a visitor-supplied query parameter or arbitrary forwarding header. A reverse proxy can therefore be the observed connection until the hosting server is configured to provide a trusted client address. The result may identify a VPN/proxy exit, shared gateway or hosting network rather than a person's device. An unchanged address does not prove anonymity; a changed address is not proof of a true-IP leak or a VPN state.
-
-City, region, country, ASN and organization are local **database estimates** for that address. They can be missing, stale or wrong, and are separate from the permission-based precise-location experiment. No map or remote geolocation API is used. Local/private/reserved addresses have no inferred public location. If database files are absent or unreadable, the IP check still works and location is explicitly unavailable.
-
-## Honest limits
-
-- A normal webpage cannot reliably confirm that a screenshot happened, especially OS shortcuts such as Windows+Shift+S. Screenshot clues and clipboard image changes have other explanations.
-- Ctrl+C alone does not prove copying. An actual document copy event is recorded separately. Clipboard contents are never read in baseline mode. The optional clipboard experiment compares bounded local fingerprints and formats; payloads and content fingerprints are not shown or exported.
-- Focus/visibility changes do not identify the other application, tab, notification shade or task switcher. Browsers may suspend background execution; there is no continuous view of activity outside the page.
-- Browser extensions are not comprehensively enumerable. Exposed extension schemes are only hints, with no extension IDs or paths logged.
-- Integrity checks cover ordinary DOM in the top document and a small set of API references captured at module load. Shadow roots, iframe documents, workers and isolated extension worlds are not traversed. Changes before the baseline and many other modifications are invisible. A script element does not prove execution, and a changed reference does not identify its cause.
-- Browser values may be rounded, spoofed, randomized, unavailable or shared by many people. Fingerprint hashes do not prove identity or uniqueness. Trusted event provenance does not prove a human generated an action.
-
-## Privacy and hosting
-
-Readings and sampled events stay in page memory. There are no third-party scripts, remote fonts, advertising pixels, analytics services, accounts, session databases or persistent tracking identifiers. The demo does not upload camera/screen/audio, typed text, clipboard payloads, selected-file contents or the evidence feed.
-
-Like any website, the hosting infrastructure receives ordinary HTTP request metadata and **may retain access logs**. The same-origin `api/context.php` endpoint reflects the current request's connection address and a limited allowlist of headers to that visitor. It also reads private, offline DB-IP files to estimate IP location and network attribution. It writes no files, database records or application logs, contacts no external IP service, never returns cookie values or authorization headers, and sends no CORS permission. Periodic checks create ordinary same-origin requests that the host may log. A connection address may belong to a VPN, proxy or shared network.
-
-An explicit JSON export may contain personal readings from demos the visitor enabled. Reloading or ending a session clears page memory; browser grants and downloaded exports may remain.
-
-## Run locally
-
-Requires Node.js 20 or newer. There are no dependencies to install.
+Use supported 64-bit PHP7.3+ and Apache. Composer, frontend dependencies and a native MaxMind extension are not required. Operational PHP diagnostics contain fixed event codes only, never exception text, IPs, user-agents, credentials or internal paths. Hosting access logs are separate.
 
 ```sh
-node server.cjs
+python scripts/package-release.py /absolute/path/observatory-release.zip
 ```
 
-Open [localhost:5173](http://localhost:5173). The server binds only to `127.0.0.1`. It implements the local metadata response in Node, so PHP is not needed to test the interface. Local requests show a loopback address and no meaningful public IP location. The deployed PHP endpoint performs the offline database lookup.
-
-```sh
-npm test
-```
-
-Focused tests cover evidence startup freezing, filters/search aliases, counters/retention/reset, reading deduplication/sampling and clipboard event provenance/payload restrictions. The private geodata integration also has a PHP fixture test:
-
-```sh
-php tests/geodata.php /absolute/path/to/observatory-data
-```
-
-The geodata test uses known public DNS fixture addresses, not visitor IPs. With the October 2026 City and ASN files it checks public IPv4/IPv6 records, AS15169, approximate labels, private/invalid addresses, missing/corrupt files and path redaction. Interface QA should cover desktop/mobile layouts, preview pause/play, feed filters, connection checks, permission start/cancel/retry/stop, reset and export. Personal-data permission prompts require the visitor's explicit approval; support varies across browsers.
-
-## Deploy to Brighton Domains / cPanel
-
-Production site code is the **contents of `dist/`**, including hidden `.htaccess`, `api/context.php` and the vendored PHP reader under `api/lib/maxmind-db/`. Upload the geodata separately outside the public website. Do not upload the repository, `.git`, tests, download script or Node server into the public web directory.
-
-1. Back up any deployment being replaced.
-2. Package the contents of `dist/` inside an `observatory/` folder in a ZIP. Include `.htaccess` and the `api/` folder.
-3. In cPanel File Manager, upload the ZIP to your home directory, outside `public_html`.
-4. Extract it into `public_html`. This creates `public_html/observatory/` without replacing other coursework or the domain homepage.
-5. Create `observatory-data` in the account home directory, alongside `public_html`. Upload/extract the uncompressed City and optional ASN MMDB files there. Keep this data out of the site-code ZIP and outside every public web directory.
-6. Open the HTTPS URL and check the page, JS/CSS assets, connection check and approximate location. `observatory/api/context.php` should return JSON; it should never expose internal file paths or exception messages.
-
-The expected layout is:
+Upload that code archive to cPanel's account home and extract into `/public_html`, updating only `public_html/observatory/`. The archive includes `.htaccess`, self-only CSP, HTTPS redirect, no-store headers, disabled directory listing and a denied `api/lib/` directory. Keep private database and counter data outside the web root:
 
 ```text
 /home/account/
-  public_html/
-    observatory/
-      index.html
-      app.js
-      api/context.php
-      api/lib/maxmind-db/...
+  public_html/observatory/
+    index.html
+    app.js
+    api/context.php
+    api/visit.php
+    api/lib/...
   observatory-data/
     dbip-city-lite.mmdb
     dbip-asn-lite.mmdb
-    release.json
+    visitor-state.json
+    visitor-stats.json
 ```
 
-The PHP path is `dirname(__DIR__, 3) . '/observatory-data'` from `api/context.php`. Adjust the private server path if deploying at a different depth. The web account needs read access to the data; the endpoint does not need write access. City and ASN together occupy about 130 MiB uncompressed, plus approximately 65 MB if a compressed upload archive is retained. Country Lite is a smaller optional fallback, with no city or region.
+The PHP data path is `dirname(__DIR__, 3) . '/observatory-data'` from each endpoint. The context endpoint needs read access; the private visitor counter additionally needs write access in this private folder. On a different host/deployment depth, adjust the private path, HTTPS redirect domain and project links. No hosting configuration remains necessary for the repaired Brighton deployment.
 
-Use 64-bit PHP 7.2+ for the endpoint and reader, choosing a supported PHP version supplied by the host. Composer and a native MaxMind extension are not required. Apache `.htaccess` config supplies HTTPS redirection, a self-only content security policy, no-store responses, no directory listing and denial of common archive/log/config backup file extensions. A valid HTTPS certificate is necessary for protected browser APIs. When deploying on a different domain, change the HTTPS redirect host in `dist/.htaccess` and the homepage links in this README and `package.json`.
+## Privacy and private visitor statistics
 
-[Official cPanel File Manager documentation](https://docs.cpanel.net/cpanel/files/file-manager/)
+Demo readings, evidence, imports and fingerprint snapshots remain in page memory until local export. This demo does not use fingerprint signatures to track people across websites. There are no third-party scripts/analytics, advertising pixels, external fonts, visitor accounts, cookies or persistent browser tracking identifiers. Normal hosting requests/access logs and the private aggregate counter are distinct from the in-memory demo.
+
+A separate same-origin `POST api/visit.php` sends only `{"event":"page_open"}` once per visible document, with no referrer, credentials, evidence feed or permission payload. It is independent of the connection endpoint. Global Privacy Control and Do Not Track opt out; common bot user-agents are skipped. Blocked JavaScript/requests, bots, shared connections and VPN changes affect accuracy.
+
+The counter starts from its first successful entry, not historic traffic. Private `visitor-stats.json` contains aggregate totals and 90 UTC days of counts only:
+
+- `totalPageViews`: counted page openings, including reloads.
+- `totalVisits`: estimated sessions, with a new visit after 30 minutes of inactivity **or a new UTC day**.
+- `dailyPageViews`, `dailyVisits`, `estimatedDailyVisitors`: aggregate date maps, not identifiable people.
+
+A separate private state file holds HMAC signatures derived from the connection IP and bounded user-agent; raw values are not saved by this counter. Its random salt and signature map are replaced on the **first counted request of a new UTC day**. This is request-driven rotation, not scheduled deletion. File locks and atomic replacements protect concurrent totals; corrupt state is not silently reset. These files are ignored by Git and have no public read endpoint.
+
+To inspect your private counts: **[Brighton Domains Dashboard](https://brighton.domains/dashboard/) → File Manager → observatory-data → visitor-stats.json → View/Download**. Your normal hosting login protects access; no new admin password is needed.
+
+## Run and verify locally
+
+Node.js20+ is sufficient for the interface preview; no dependency installation/build is needed:
+
+```sh
+node server.cjs
+npm test
+```
+
+Open [localhost:5173](http://localhost:5173). The preview binds to loopback, returns honest local connection metadata and never increments live visitor statistics. Production PHP tests use a separate temporary directory and known public DNS fixtures:
+
+```sh
+php tests/visits.php
+php tests/geodata.php /absolute/path/to/observatory-data
+```
+
+Automated suites cover evidence/counts, trusted/synthetic clipboard handling, permission lifecycle/late resource cleanup, connection failures and source/family baselines, daily counter concurrency/retention, fresh fingerprint snapshots, media-query/pointer accuracy, resize deduplication, route parsing and bounded comparison imports. Browser QA covers real navigation/history/reload, useful anchors/focus, filter/mode separation, copy/click evidence, real JSON downloads, responsive layouts and reduced motion. Physical hardware and OS screenshot actions cannot be fully automated; unsupported/denied capabilities remain explicitly labelled. A normal webpage cannot universally confirm screenshots, enumerate all extensions or see other applications/tabs.
 
 ## Refresh the private database monthly
 
@@ -143,23 +113,3 @@ MMDB files and compressed database archives are ignored by Git and **must not be
 [DB-IP Lite](https://db-ip.com/db/lite.php) data is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The connection card includes the required [IP Geolocation by DB-IP](https://db-ip.com) attribution and license link. Preserve attribution on pages displaying or using these results and when redistributing the database. The Lite datasets are updated monthly with reduced coverage and accuracy. The bundled databases are unmodified October 2026 releases.
 
 The PHP reader is the official [maxmind-db/reader](https://packagist.org/packages/maxmind-db/reader) version 1.14.0, upstream commit `f3c92f68b3bec42a9aa780368399e03dc6b91e89`, licensed under Apache-2.0. Its unchanged `autoload.php`, `src` and `LICENSE` are vendored in `dist/api/lib/maxmind-db/`. It has no production Composer package dependencies. MaxMind does not receive visitor addresses from this application.
-
-## Source layout
-
-- `dist/index.html` — onboarding, overview, live inventory and educational views.
-- `dist/app.js` — session lifecycle, navigation, filters, counters and export.
-- `dist/preview.js`, `dist/welcome.css` — illustrative animated welcome preview and responsive split entry screen.
-- `dist/connection.js` — visible-page same-origin checks, response validation and verified IP-change history.
-- `dist/evidence.js` — bounded evidence store, sampling, search and startup snapshot.
-- `dist/sensors.js` — permission-free baseline readings and page activity handlers.
-- `dist/integrity.js` — narrow script/attribute/reference/extension-scheme hints.
-- `dist/permissions.js` — explicit capability experiments and resource cleanup.
-- `dist/permission-rows.js` — accessible stable switches, details and local previews.
-- `dist/learn.js` — sourced explanations and browser boundaries.
-- `dist/style.css`, `dist/plain.css`, `dist/permission-readings.css` — responsive UI.
-- `dist/api/context.php` — limited same-origin request metadata and private offline IP-location/ASN lookup.
-- `dist/api/lib/maxmind-db/` — official vendored Apache-2.0 MaxMind DB PHP reader.
-- `dist/.htaccess` — Apache hosting rules.
-- `server.cjs` — dependency-free loopback development server.
-- `scripts/download-geodata.mjs`, `geodata/README.md` — private monthly data preparation and deployment notes.
-- `tests/` — focused JavaScript tests and optional PHP geodata fixtures.
