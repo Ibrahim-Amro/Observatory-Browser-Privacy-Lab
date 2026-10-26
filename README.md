@@ -5,9 +5,19 @@ Built by **Ibrahim Amro** · [LinkedIn](https://www.linkedin.com/in/ibrahimamro/
 
 An approachable, working browser privacy learning tool: **What can a website actually see?** Copy sample text, click a harmless target, switch tabs and inspect the evidence. Read the explanations without starting a session. Developer tools remain available for controlled privacy-extension comparisons.
 
+## Guided learning upgrade (2.1)
+
+- **Guided check-up** (`#checkup`): six questions with real event results, independent steps, skip controls and explicit limits. A synthetic click or a focus change cannot pass a different real-event test. Reviewing the screenshot explanation means the limit was reviewed, never that a screenshot was confirmed. Progress is kept in this tab only and is not a privacy score.
+- **My results** (`#report`): plain-language observations and limits, independent of feed filters/retention. Download a text report or print the summary. The text download omits connection IP and approximate location unless explicitly included; the detailed JSON export remains separate.
+- **Question library** (`#answers`): 12 searchable, topic-filtered questions with accessible disclosures, experiment links, an evidence glossary and primary documentation links. Reading it does not start protected capabilities or require a session.
+- **Global stop control**: stop active or pending permission demos from the dashboard header. This releases the demo resources; saved browser grants remain controlled by browser site settings.
+- **A clearer overview**: guided entry and results are prominent; individual sample actions are in an expandable section, keeping the live feed easier to reach. Direct experiment links open that section before focusing their target.
+
+No new external service, tracking identifier, browser storage, protected API request or permission grant is introduced by these learning tools. The existing private aggregate visit counter and its meaning are unchanged.
+
 ## Use the lab
 
-1. Read the question cards, then select **Try it on my browser**. No account, device selection or new permission request is needed. Saved browser grants may already exist; protected demos do not start automatically.
+1. Read the question cards, then select **Start a guided check-up** or **Explore the live lab**. No account, device selection or new permission request is needed. Saved browser grants may already exist; protected demos do not start automatically.
 2. Try the guided copy, click, tab-visibility and screenshot-clue experiments. Each separates the observed event from what it cannot prove. The ordinary copy demo records event/formats, not clipboard contents.
 3. Watch **Live Evidence**. The visible **Expert mode** switch adds technical readings and diagnostic hints without requesting permissions or clearing evidence. **Filters** contains search, category, evidence type, startup inclusion and clear-filter controls only. Technical categories are unavailable until Expert mode is explicitly enabled.
 4. Open **Permission Lab** for the full catalogue. Each experiment explains access before requesting it; off stops collection but does not revoke saved browser grants. Unsupported/blocked capabilities explain why. Pending requests can be cancelled, snapshots repeated, and failures retried.
@@ -17,9 +27,9 @@ An approachable, working browser privacy learning tool: **What can a website act
 
 ## Navigation and evidence
 
-Public links `#questions`, `#how-it-works`, `#developer` and `#privacy` remain useful before or during a session. They scroll to and focus a substantial visible destination, including when already on screen. A running session remains active while reading public explanations; **Return to my session** returns to the overview.
+Public links `#questions`, `#how-it-works`, `#developer`, `#answers` and `#privacy` remain useful before or during a session. They scroll to and focus a substantial visible destination, including when already on screen. A running session remains active while reading public explanations; **Return to my session** returns to the overview.
 
-Dashboard routes are `#overview`, `#signals`, `#permissions`, `#fingerprints`, `#boundaries`, `#guide` and `#compare`. Direct links/reloads start a fresh in-memory session at that view; navigation supports browser Back/Forward. Unknown routes return to the introduction with feedback. Reset clears the current session; going Back afterwards cannot recover deleted evidence.
+Dashboard routes are `#overview`, `#signals`, `#permissions`, `#fingerprints`, `#boundaries`, `#guide`, `#compare`, `#checkup` and `#report`. Direct links/reloads start a fresh in-memory session at that view; navigation supports browser Back/Forward. Unknown routes return to the introduction with feedback. Reset clears the current session; going Back afterwards cannot recover deleted evidence.
 
 The bounded feed retains the latest 600 entries. **All-time session totals**, observed activity counts and the frozen first-second snapshot are separate from retained entries and survive filtering/feed clearing. Explanatory limitations and unavailable/context entries are not counted as successful startup observations. Synthetic events are diagnostic entries, separate from browser-dispatched activity; trusted provenance does not prove a physical human action.
 

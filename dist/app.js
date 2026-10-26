@@ -7,6 +7,7 @@ import {mountPermissionRows} from './permission-rows.js';
 import {mountEvidencePreview} from './preview.js';
 import {createConnectionMonitor} from './connection.js';
 import {recordPageEntry} from './visits.js';
+import {mountLearningTools} from './learning-ui.js';
 import {parseRoute,DASHBOARD_VIEWS} from './routes.js';
 import {makeSnapshot,parseSnapshot,compareSnapshots,SESSION_SCHEMA,MAX_IMPORT_BYTES} from './comparison.js';
 recordPageEntry();
@@ -48,6 +49,12 @@ let lastTableKeys='';
 let lastGroupKeys='';
 let lastFingerprintKeys='';
 const preview=mountEvidencePreview({container:$('previewTrack'),button:$('previewPause')});
+const learningTools=mountLearningTools({
+  getSession:()=>({startedAt:started?startTime:null,summary:evidence.summary(),connection:connection?.readState(),fingerprint:sensors?.getSummary().fingerprint||null,activeDemos:lab?.items.filter(item=>{const state=lab.readState(item.id);return state.active||state.status==='requesting';}).map(item=>item.title)||[]}),
+  onNavigate:(view,topic)=>{if(topic==='extensions'){selectedGroup='integrity';$('signalSearch').value='';$('signalKind').value='all';}navigate(view);if(view==='overview'&&topic){const target=topic==='connection'||topic==='ip'?$('connectionTitle'):$(`experiment-${topic}`);focusDestination(target);}},
+  onRefreshConnection:()=>connection?.checkNow(),
+  onDownload:(text,name)=>downloadText(text,name),
+});
 function finishStartupIfDue(){if(startupDeadline&&Date.now()>=startupDeadline){startupDeadline=0;evidence.finishStartup();}}
 function setSignal(group,key,value,options={}) {
   if(!started)return;
@@ -67,6 +74,7 @@ function addEvent(eventTitle,detail,kind='observed',meta={}) {
   finishStartupIfDue();
   const entry=evidence.add(eventTitle,detail,kind,{source:meta.source||'This page’s browser event listeners',...meta});feedDirty=true;
   renderGuided(entry);
+  learningTools.observe(entry);
 }
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4500);}
 function renderConnection(state){
@@ -114,9 +122,9 @@ function beginSession(){
 }
 function showView(view){
   if(!started||!DASHBOARD_VIEWS.includes(view))return;
-  currentView=view;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==`view-${view}`);
+  currentView=view;document.body.dataset.currentView=view;document.querySelectorAll('.view').forEach(el=>el.hidden=el.id!==`view-${view}`);
   document.querySelectorAll('[data-view]').forEach(button=>{button.classList.toggle('active',button.dataset.view===view);button.setAttribute('aria-current',button.dataset.view===view?'page':'false');});
-  $('breadcrumbView').textContent={permissions:'PERMISSION LAB',signals:'LIVE SIGNALS',fingerprints:'FINGERPRINTS',boundaries:'THE BOUNDARIES',guide:'FIELD GUIDE',overview:'OVERVIEW',compare:'COMPARE SNAPSHOTS'}[view];
+  $('breadcrumbView').textContent={permissions:'PERMISSION LAB',signals:'LIVE SIGNALS',fingerprints:'FINGERPRINTS',boundaries:'THE BOUNDARIES',guide:'FIELD GUIDE',overview:'OVERVIEW',compare:'COMPARE SNAPSHOTS',checkup:'GUIDED CHECK-UP',report:'MY RESULTS'}[view];
   if(view==='signals')renderSignalTable(true);
   if(view==='overview'){renderFeed(true);renderPermissions();}
   if(view==='permissions')renderPermissions();
@@ -142,6 +150,9 @@ function renderSummary(){
   $('liveState').style.color=document.hasFocus()&&!document.hidden?'var(--lime)':'var(--amber)';
   document.querySelector('.mode-badge').textContent=hasRequested?'EXPLORING · PERMISSION LAB USED':'BASELINE · NO NEW REQUESTS';
   $('footerSession').textContent=`${signals.size} inventory entries · Demo readings in memory · Private aggregate visits on host`;
+  const pendingCount=lab?.items.filter(item=>{const state=lab.readState(item.id);return state.active||state.status==='requesting';}).length||0;
+  $('quickStopAll').disabled=!pendingCount;$('quickStopAll').textContent=pendingCount?`Stop demos (${pendingCount})`:'No demos running';
+  learningTools.update();
   renderIntegrity();
 }
 function renderLive(){
@@ -235,6 +246,7 @@ function exportSession(){
     summary:evidence.summary(),feedFilters:feedFilters(),signals:[...signals.values()],events:evidence.query({mode:'expert'}).reverse(),fingerprint:sensors?.getSummary().fingerprint||null,permissionExperiments:lab.items.map(item=>({id:item.id,title:item.title,...lab.readState(item.id)}))};
   downloadJson(report,`observatory-session-${new Date().toISOString().slice(0,10)}.json`);
 }
+function downloadText(text,filename){let url;try{url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}));const a=node('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);toast('Readable report download requested. Personal connection values are omitted unless you chose to include them.');}catch{if(url)URL.revokeObjectURL(url);toast('The readable report could not be prepared.');}}
 function resetSession({updateUrl=true,announce=true}={}){
   sessionToken++;started=false;connection?.stop();connection=null;lastConnectionChange=0;connectionHistory.length=0;sensors?.stop();lab?.dispose();integrity?.stop();permissionMounts.forEach(mount=>mount.dispose());permissionMounts=[];clearInterval(viewTimer);clearTimeout(startupTimer);clearTimeout(routeHighlightTimer);startupDeadline=0;sensors=null;lab=null;integrity=null;signals.clear();evidence.reset();hasRequested=false;lastGroupKeys='';lastTableKeys='';lastFeedKeys='';tableNodes.clear();lastFingerprintKeys='';signalsDirty=false;permissionDirty=false;feedDirty=false;selectedGroup='all';comparisonBaseline=null;
   for(const id of ['eventFeed','signalRows','permissionCards','fingerprintCards','comparisonResults'])$(id)?.replaceChildren();
@@ -242,9 +254,10 @@ function resetSession({updateUrl=true,announce=true}={}){
   for(const id of ['signalKind','permissionFilter','feedCategory','feedKind'])$(id).value='all';
   $('includeStartup').checked=true;setFeedSettings(false);setExpertMode(false);
   $('regenerate').disabled=false;$('regenerate').textContent='Recalculate signatures ↻';
-  $('app').hidden=true;$('welcome').hidden=false;preview.setVisible(true);document.querySelector('.skip').href='#main';$('detailDialog').close();$('begin').textContent='Try it on my browser';$('connectionHistory').replaceChildren(node('li','','No verified changes in this session.'));
+  $('app').hidden=true;$('welcome').hidden=false;preview.setVisible(true);document.querySelector('.skip').href='#main';$('detailDialog').close();$('begin').textContent='Start a guided check-up';$('connectionHistory').replaceChildren(node('li','','No verified changes in this session.'));
   for(const id of ['copyResult','tabResult','screenshotResult','clickResult'])if($(id))$(id).textContent='No matching event observed.';
   if($('comparisonStatus'))$('comparisonStatus').textContent='Capture or import a baseline to begin. Files stay in this tab.';
+  learningTools.reset();
   if(updateUrl){history.pushState(null,'',location.pathname+location.search);applyRoute();$('begin').focus({preventScroll:true});}
   if(announce)toast('Session cleared and demos stopped. Saved browser grants remain in site settings.');
 }
@@ -256,14 +269,14 @@ function setExpertMode(value){
   renderFeed(true);
 }
 function setFeedSettings(open){$('feedSettings').hidden=!open;$('feedSettingsButton').setAttribute('aria-expanded',String(open));if(open)$('feedSearch').focus();}
-function focusDestination(element){if(!element)return;highlightedDestination?.classList.remove('route-highlight');highlightedDestination=element;element.setAttribute('tabindex','-1');element.scrollIntoView({block:'start',behavior:'auto'});element.focus({preventScroll:true});element.classList.add('route-highlight');clearTimeout(routeHighlightTimer);routeHighlightTimer=setTimeout(()=>element.classList.remove('route-highlight'),1800);}
+function focusDestination(element){if(!element)return;for(let parent=element.parentElement?.closest('details');parent;parent=parent.parentElement?.closest('details'))parent.open=true;highlightedDestination?.classList.remove('route-highlight');highlightedDestination=element;element.setAttribute('tabindex','-1');element.scrollIntoView({block:'start',behavior:'auto'});element.focus({preventScroll:true});element.classList.add('route-highlight');clearTimeout(routeHighlightTimer);routeHighlightTimer=setTimeout(()=>element.classList.remove('route-highlight'),1800);}
 function applyRoute(){
   const route=parseRoute(location.hash);
   if(route.unknown){history.replaceState(null,'',location.pathname+location.search);toast('That section was not found. Here is the introduction.');}
   if(route.screen==='dashboard'){
     beginSession();$('welcome').hidden=true;$('app').hidden=false;preview.setVisible(false);document.querySelector('.skip').href='#dashboard';showView(route.view);focusDestination($(`view-${route.view}`).querySelector('h1')||$('dashboard'));
   }else{
-    $('welcome').hidden=false;$('app').hidden=true;preview.setVisible(!started);document.querySelector('.skip').href='#main';$('begin').textContent=started?'Return to my session':'Try it on my browser';if($('landingSessionNote'))$('landingSessionNote').hidden=!started;if(!location.hash){window.scrollTo(0,0);}else focusDestination($(route.section)||$('main'));
+    document.body.dataset.currentView='home';$('welcome').hidden=false;$('app').hidden=true;preview.setVisible(!started);document.querySelector('.skip').href='#main';$('begin').textContent=started?'Return to my session':'Start a guided check-up';if($('landingSessionNote'))$('landingSessionNote').hidden=!started;if(!location.hash){window.scrollTo(0,0);}else focusDestination($(route.section)||$('main'));
     if(started&&route.section!=='main')toast('Your session is still running in this tab. Use “Return to my session” to go back.');
   }
 }
@@ -288,7 +301,7 @@ function renderComparison(){
   const table=node('table','comparison-table');const head=node('thead');const tr=node('tr');for(const label of ['Reading','Result','Baseline','Current'])tr.append(node('th','',label));head.append(tr);table.append(head);const body=node('tbody');
   for(const row of rows){const tr=node('tr');tr.append(node('th','',row.key),node('td','',title(row.status)));for(const value of [row.before,row.after]){const td=node('td');const details=node('details');details.append(node('summary','',value.length>80?value.slice(0,80)+'…':value),node('p','detail-value',value),node('p','',row.note));td.append(details);tr.append(td);}body.append(tr);}table.append(body);$('comparisonResults').replaceChildren(table);
 }
-$('begin').addEventListener('click',()=>navigate('overview'));
+$('begin').addEventListener('click',()=>navigate(started?currentView:'checkup'));
 for(const button of document.querySelectorAll('[data-view],[data-go]'))button.addEventListener('click',event=>{event.preventDefault();navigate(button.dataset.view||button.dataset.go);});
 for(const button of document.querySelectorAll('[data-experiment]'))button.addEventListener('click',()=>startExperiment(button.dataset.experiment));
 document.querySelector('.sidebar .brand').addEventListener('click',event=>{event.preventDefault();navigate('overview');});
@@ -300,7 +313,8 @@ $('permissionSearch').addEventListener('input',renderPermissions);$('permissionF
 $('closeDetail').addEventListener('click',()=>$('detailDialog').close());
 $('detailDialog').addEventListener('click',event=>{if(event.target===$('detailDialog')){const rect=$('detailDialog').getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)$('detailDialog').close();}});
 $('clearFeed').addEventListener('click',()=>{evidence.clearLog();lastFeedKeys='';renderFeed(true);toast('Feed cleared. All-time session totals and the startup snapshot are kept.');});
-$('stopAll').addEventListener('click',()=>{lab?.stopAll();permissionDirty=true;renderPermissions();toast('Demos stopped. Revoke saved grants through browser site settings.');});
+const stopDemos=()=>{lab?.stopAll();permissionDirty=true;renderPermissions();toast('Demos stopped. Revoke saved grants through browser site settings.');};
+$('stopAll').addEventListener('click',stopDemos);$('quickStopAll').addEventListener('click',stopDemos);
 $('feedSettingsButton').addEventListener('click',()=>setFeedSettings($('feedSettings').hidden));
 $('closeFeedSettings').addEventListener('click',()=>{setFeedSettings(false);$('feedSettingsButton').focus();});
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('feedSettings').hidden){setFeedSettings(false);$('feedSettingsButton').focus();}});
@@ -308,7 +322,7 @@ document.addEventListener('click',event=>{if(!$('feedSettings').hidden&&!$('feed
 for(const id of ['feedSearch','feedCategory','feedKind','includeStartup'])$(id).addEventListener(id==='feedSearch'?'input':'change',()=>renderFeed(true));
 $('clearFilters').addEventListener('click',()=>{$('feedSearch').value='';$('feedCategory').value='all';$('feedKind').value='all';$('includeStartup').checked=true;renderFeed(true);toast('Filters cleared. Evidence and permissions are unchanged.');});
 $('expertMode').addEventListener('click',()=>{setExpertMode(!expertMode);toast(`Expert mode ${expertMode?'on':'off'}. No extra permissions were requested.`);});
-$('tryClick').addEventListener('click',event=>{$('clickResult').textContent=event.isTrusted?'Observed · A browser-dispatched click reached this sample button. This does not establish identity or attention.':'Diagnostic · A synthetic click was dispatched. It does not prove a physical click.';});
+$('tryClick').addEventListener('click',event=>{learningTools.markSampleClick(event.isTrusted);$('clickResult').textContent=event.isTrusted?'Observed · A browser-dispatched click reached this sample button. This does not establish identity or attention.':'Diagnostic · A synthetic click was dispatched. It does not prove a physical click.';});
 $('checkIntegrity').addEventListener('click',()=>{integrity?.checkNow();renderSummary();toast('Watched page-world API checks refreshed. Cause remains unknown.');});
 $('inspectIntegrity').addEventListener('click',()=>{selectedGroup='integrity';$('signalSearch').value='';$('signalKind').value='all';navigate('signals');});
 $('regenerate').addEventListener('click',async()=>{const token=sessionToken;$('regenerate').disabled=true;$('regenerate').textContent='Recalculating…';try{await sensors?.fingerprint();if(started&&token===sessionToken){renderFingerprints();toast('A fresh local fingerprint snapshot was collected. Unavailable values stay labelled.');}}catch(error){if(started&&token===sessionToken)toast(`Recalculation could not finish: ${error?.name||'restricted'}.`);}finally{if(token===sessionToken){$('regenerate').disabled=false;$('regenerate').textContent='Recalculate signatures ↻';}}});
